@@ -3,4 +3,6 @@ sqlalchemy
 asyncpg
 pydantic
 pydantic-settings
+alembic
+psycopg2-binary
 uvicorn
