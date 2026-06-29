@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: auto_shop_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: vehicle_service_shop
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: auto_shop_api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgrespassword@db:5432/vehicle_service_shop"
+      SECRET_KEY: "${SECRET_KEY:-64e9a38f972b217a80b852928509c3132e08e6f1618a8039c3e981da401bb2f4}"
+      ENVIRONMENT: "${ENVIRONMENT:-production}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DEBUG: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run migrations then start the server
+    command: >
+      sh -c "
+        python -m alembic upgrade head &&
+        python seed_db.py &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000
+      "
+
+volumes:
+  pgdata:
