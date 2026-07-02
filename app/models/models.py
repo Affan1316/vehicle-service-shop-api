@@ -350,15 +350,19 @@ class Visit(Base):
             if committed is not NO_VALUE and committed is not None:
                 old_status = committed
                 if old_status != value:
-                    transitions = {
-                        'checked_in': {'in_diagnosis', 'awaiting_quote', 'in_service'},
-                        'in_diagnosis': {'awaiting_quote', 'in_service'},
-                        'awaiting_quote': {'in_service', 'completed'},
-                        'in_service': {'awaiting_pickup'},
-                        'awaiting_pickup': {'completed'},
-                        'completed': set()
-                    }
-                    allowed_next = transitions.get(old_status, set())
+                    allowed_next = set()
+                    if old_status == 'checked_in':
+                        allowed_next = {'in_diagnosis', 'awaiting_quote', 'in_service'}
+                    elif old_status == 'in_diagnosis':
+                        allowed_next = {'awaiting_quote', 'in_service'}
+                    elif old_status == 'awaiting_quote':
+                        allowed_next = {'in_service', 'completed'}
+                    elif old_status == 'in_service':
+                        allowed_next = {'awaiting_pickup'}
+                    elif old_status == 'awaiting_pickup':
+                        allowed_next = {'completed'}
+                    elif old_status == 'completed':
+                        allowed_next = set()
                     if value not in allowed_next:
                         raise ValueError(f"Invalid state transition from '{old_status}' to '{value}'.")
         except Exception as e:
