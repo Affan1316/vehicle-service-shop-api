@@ -26,7 +26,10 @@ from app.schemas.schemas import (
     InvoiceCreate, InvoiceUpdate, InvoiceResponse,
     DisputeCreate, DisputeUpdate, DisputeResponse,
     PaymentCreate, PaymentResponse,
-    StorageChargeCreate, StorageChargeUpdate, StorageChargeResponse
+    StorageChargeCreate, StorageChargeUpdate, StorageChargeResponse,
+    WarrantyCreate, WarrantyUpdate, WarrantyResponse,
+    WarrantyClaimCreate, WarrantyClaimResponse,
+    UserCreate, UserResponse, Token, TokenData, PaginatedResponse, RefreshTokenRequest
 )
 
 __all__ = [
@@ -57,5 +60,8 @@ __all__ = [
     "InvoiceCreate", "InvoiceUpdate", "InvoiceResponse",
     "DisputeCreate", "DisputeUpdate", "DisputeResponse",
     "PaymentCreate", "PaymentResponse",
-    "StorageChargeCreate", "StorageChargeUpdate", "StorageChargeResponse"
+    "StorageChargeCreate", "StorageChargeUpdate", "StorageChargeResponse",
+    "WarrantyCreate", "WarrantyUpdate", "WarrantyResponse",
+    "WarrantyClaimCreate", "WarrantyClaimResponse",
+    "UserCreate", "UserResponse", "Token", "TokenData", "PaginatedResponse", "RefreshTokenRequest"
 ]

@@ -271,6 +271,11 @@ class WorkOrderBase(BaseModel):
     authorized_amount: decimal.Decimal = Field(..., ge=0)
     promised_date: Optional[datetime.date] = None
     created_at: datetime.datetime
+    scheduled_at: Optional[datetime.datetime] = None
+    paused_at: Optional[datetime.datetime] = None
+    pause_reason: Optional[str] = Field(None, max_length=500)
+    closed_at: Optional[datetime.datetime] = None
+    archived_at: Optional[datetime.datetime] = None
 
 class WorkOrderCreate(BaseModel):
     quote_id: uuid.UUID
@@ -672,3 +677,95 @@ class StorageChargeResponse(StorageChargeBase):
     storage_charge_id: uuid.UUID
     total_charge: decimal.Decimal
     model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================
+# SECTION 8: Warranties
+# ================================================================
+
+# WARRANTY
+class WarrantyBase(BaseModel):
+    work_order_id: uuid.UUID
+    covers_labor: bool = Field(default=False)
+    covers_parts: bool = Field(default=False)
+    coverage_type: Optional[str] = Field(None, max_length=100)
+    term: Optional[str] = Field(None, max_length=100)
+    start_date: Optional[datetime.date] = None
+
+class WarrantyCreate(WarrantyBase):
+    pass
+
+class WarrantyUpdate(BaseModel):
+    covers_labor: Optional[bool] = None
+    covers_parts: Optional[bool] = None
+    coverage_type: Optional[str] = Field(None, max_length=100)
+    term: Optional[str] = Field(None, max_length=100)
+    start_date: Optional[datetime.date] = None
+
+class WarrantyResponse(WarrantyBase):
+    warranty_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# WARRANTY CLAIM
+class WarrantyClaimBase(BaseModel):
+    warranty_id: uuid.UUID
+    claim_date: datetime.date
+    status: str = Field(..., description="filed, approved, denied, resolved")
+    resolution: Optional[str] = Field(None, max_length=1000)
+
+class WarrantyClaimCreate(WarrantyClaimBase):
+    pass
+
+class WarrantyClaimUpdate(BaseModel):
+    status: Optional[str] = None
+    resolution: Optional[str] = Field(None, max_length=1000)
+
+class WarrantyClaimResponse(WarrantyClaimBase):
+    claim_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================
+# SECTION 9: Authentication & Users
+# ================================================================
+
+class UserBase(BaseModel):
+    username: str = Field(..., max_length=100)
+    email: str = Field(..., max_length=255)
+    role: str = Field(default="customer", description="manager, advisor, technician, customer")
+    customer_id: Optional[uuid.UUID] = None
+    tech_id: Optional[uuid.UUID] = None
+
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=6)
+
+class UserResponse(UserBase):
+    user_id: uuid.UUID
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+class Token(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+# ================================================================
+# SECTION 10: Generic Envelope Wrapper for Pagination
+# ================================================================
+
+T = TypeVar('T')
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    total: int
+    limit: int
+    offset: int
+    items: List[T]
