@@ -222,3 +222,241 @@ class QuoteUpdate(BaseModel):
 class QuoteResponse(QuoteBase):
     quote_id: uuid.UUID
     model_config = ConfigDict(from_attributes=True)
+
+
+# DEPOSIT
+class DepositBase(BaseModel):
+    quote_id: uuid.UUID
+    customer_id: uuid.UUID
+    work_order_id: Optional[uuid.UUID] = None
+    amount: decimal.Decimal = Field(..., gt=0)
+    status: str = Field(..., description="collected, applied, refunded")
+    collected_at: datetime.datetime
+    invoice_id: Optional[uuid.UUID] = None
+    refunded_at: Optional[datetime.datetime] = None
+    refund_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+
+class DepositCreate(BaseModel):
+    quote_id: uuid.UUID
+    customer_id: uuid.UUID
+    work_order_id: Optional[uuid.UUID] = None
+    amount: decimal.Decimal = Field(..., gt=0)
+    status: str = "collected"
+    collected_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+
+class DepositUpdate(BaseModel):
+    work_order_id: Optional[uuid.UUID] = None
+    status: Optional[str] = None
+    invoice_id: Optional[uuid.UUID] = None
+    refunded_at: Optional[datetime.datetime] = None
+    refund_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+
+class DepositResponse(DepositBase):
+    deposit_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================
+# SECTION 4: Job Execution
+# ================================================================
+
+# WORK ORDER
+class WorkOrderBase(BaseModel):
+    quote_id: uuid.UUID
+    visit_id: Optional[uuid.UUID] = None
+    vehicle_id: str = Field(..., min_length=17, max_length=17)
+    customer_id: uuid.UUID
+    bay_id: Optional[uuid.UUID] = None
+    status: str = Field(..., description="created, scheduled, paused, active, closed, archived")
+    authorized_amount: decimal.Decimal = Field(..., ge=0)
+    promised_date: Optional[datetime.date] = None
+    created_at: datetime.datetime
+    scheduled_at: Optional[datetime.datetime] = None
+    paused_at: Optional[datetime.datetime] = None
+    pause_reason: Optional[str] = Field(None, max_length=500)
+    closed_at: Optional[datetime.datetime] = None
+    archived_at: Optional[datetime.datetime] = None
+
+class WorkOrderCreate(BaseModel):
+    quote_id: uuid.UUID
+    visit_id: Optional[uuid.UUID] = None
+    vehicle_id: str = Field(..., min_length=17, max_length=17)
+    customer_id: uuid.UUID
+    status: str = "created"
+    authorized_amount: decimal.Decimal = Field(..., ge=0)
+    promised_date: Optional[datetime.date] = None
+    created_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+
+class WorkOrderUpdate(BaseModel):
+    bay_id: Optional[uuid.UUID] = None
+    status: Optional[str] = None
+    authorized_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+    promised_date: Optional[datetime.date] = None
+    scheduled_at: Optional[datetime.datetime] = None
+    paused_at: Optional[datetime.datetime] = None
+    pause_reason: Optional[str] = Field(None, max_length=500)
+    closed_at: Optional[datetime.datetime] = None
+    archived_at: Optional[datetime.datetime] = None
+
+class WorkOrderResponse(WorkOrderBase):
+    work_order_id: uuid.UUID
+    total_cost: decimal.Decimal
+    model_config = ConfigDict(from_attributes=True)
+
+
+# LINE ITEM
+class LineItemBase(BaseModel):
+    work_order_id: uuid.UUID
+    description: str = Field(..., max_length=500)
+    billing_mode: str = Field(..., description="flat_rate or hourly")
+    price: decimal.Decimal = Field(..., ge=0)
+    status: str = Field(..., description="not_started, gated, in_progress, on_hold, completed")
+    hold_reason: Optional[str] = Field(None, max_length=500)
+    started_at: Optional[datetime.datetime] = None
+    completed_at: Optional[datetime.datetime] = None
+
+class LineItemCreate(LineItemBase):
+    pass
+
+class LineItemUpdate(BaseModel):
+    description: Optional[str] = Field(None, max_length=500)
+    billing_mode: Optional[str] = Field(None, description="flat_rate or hourly")
+    price: Optional[decimal.Decimal] = Field(None, ge=0)
+    status: Optional[str] = None
+    hold_reason: Optional[str] = Field(None, max_length=500)
+    started_at: Optional[datetime.datetime] = None
+    completed_at: Optional[datetime.datetime] = None
+
+class LineItemResponse(LineItemBase):
+    line_item_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# CHANGE ORDER
+class ChangeOrderBase(BaseModel):
+    work_order_id: uuid.UUID
+    line_item_id: uuid.UUID
+    finding_id: Optional[uuid.UUID] = None
+    reason: str = Field(..., max_length=500)
+    delta_amount: decimal.Decimal
+    approval_status: str = Field(..., description="issued, approved, declined")
+    approved_by: Optional[str] = Field(None, max_length=255)
+    approved_at: Optional[datetime.datetime] = None
+    decline_reason: Optional[str] = Field(None, max_length=500)
+
+class ChangeOrderCreate(ChangeOrderBase):
+    pass
+
+class ChangeOrderUpdate(BaseModel):
+    approval_status: Optional[str] = None
+    approved_by: Optional[str] = Field(None, max_length=255)
+    approved_at: Optional[datetime.datetime] = None
+    decline_reason: Optional[str] = Field(None, max_length=500)
+
+class ChangeOrderResponse(ChangeOrderBase):
+    change_order_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# DIAGNOSTIC
+class DiagnosticBase(BaseModel):
+    visit_id: uuid.UUID
+    vehicle_id: str = Field(..., min_length=17, max_length=17)
+    tech_id: uuid.UUID
+    performed_at: datetime.datetime
+    status: str = Field(..., description="in_progress, completed")
+
+class DiagnosticCreate(DiagnosticBase):
+    pass
+
+class DiagnosticUpdate(BaseModel):
+    status: Optional[str] = None
+
+class DiagnosticResponse(DiagnosticBase):
+    report_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# DIAGNOSTIC FINDING
+class DiagnosticFindingBase(BaseModel):
+    report_id: uuid.UUID
+    description: str = Field(..., max_length=1000)
+
+class DiagnosticFindingCreate(DiagnosticFindingBase):
+    pass
+
+class DiagnosticFindingUpdate(BaseModel):
+    description: Optional[str] = Field(None, max_length=1000)
+
+class DiagnosticFindingResponse(DiagnosticFindingBase):
+    finding_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# QUALITY CHECK
+class QualityCheckBase(BaseModel):
+    line_item_id: uuid.UUID
+    tech_id: uuid.UUID
+    performed_at: datetime.datetime
+    status: str = Field(..., description="passed or failed")
+
+class QualityCheckCreate(QualityCheckBase):
+    pass
+
+class QualityCheckResponse(QualityCheckBase):
+    qc_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================
+# SECTION 5: Shop Resources
+# ================================================================
+
+# BAY
+class BayBase(BaseModel):
+    bay_type: str = Field(..., max_length=100)
+    status: str = Field(..., description="available, held, confirmed, occupied, cleaning, maintenance")
+    current_work_order_id: Optional[uuid.UUID] = None
+    held_until: Optional[datetime.datetime] = None
+
+class BayCreate(BayBase):
+    pass
+
+class BayUpdate(BaseModel):
+    bay_type: Optional[str] = Field(None, max_length=100)
+    status: Optional[str] = None
+    current_work_order_id: Optional[uuid.UUID] = None
+    held_until: Optional[datetime.datetime] = None
+
+class BayResponse(BayBase):
+    bay_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# CERTIFICATION
+class CertificationBase(BaseModel):
+    tech_id: uuid.UUID
+    cert_type: str = Field(..., max_length=100)
+    expiry_date: datetime.date
+
+class CertificationCreate(CertificationBase):
+    pass
+
+class CertificationResponse(CertificationBase):
+    cert_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# LABOR ENTRY
+class LaborEntryBase(BaseModel):
+    tech_id: uuid.UUID
+    line_item_id: uuid.UUID
+    work_date: datetime.date
+    hours: decimal.Decimal = Field(..., gt=0)
+
+class LaborEntryCreate(LaborEntryBase):
+    pass
+
+class LaborEntryResponse(LaborEntryBase):
+    labor_entry_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)

@@ -7,7 +7,17 @@ from app.schemas.schemas import (
     VehicleCreate, VehicleUpdate, VehicleResponse,
     AppointmentCreate, AppointmentUpdate, AppointmentResponse,
     VisitCreate, VisitUpdate, VisitResponse,
-    QuoteCreate, QuoteUpdate, QuoteResponse
+    QuoteCreate, QuoteUpdate, QuoteResponse,
+    DepositCreate, DepositUpdate, DepositResponse,
+    WorkOrderCreate, WorkOrderUpdate, WorkOrderResponse,
+    LineItemCreate, LineItemUpdate, LineItemResponse,
+    ChangeOrderCreate, ChangeOrderUpdate, ChangeOrderResponse,
+    DiagnosticCreate, DiagnosticUpdate, DiagnosticResponse,
+    DiagnosticFindingCreate, DiagnosticFindingUpdate, DiagnosticFindingResponse,
+    QualityCheckCreate, QualityCheckResponse,
+    BayCreate, BayUpdate, BayResponse,
+    CertificationCreate, CertificationResponse,
+    LaborEntryCreate, LaborEntryResponse
 )
 
 __all__ = [
@@ -19,5 +29,15 @@ __all__ = [
     "VehicleCreate", "VehicleUpdate", "VehicleResponse",
     "AppointmentCreate", "AppointmentUpdate", "AppointmentResponse",
     "VisitCreate", "VisitUpdate", "VisitResponse",
-    "QuoteCreate", "QuoteUpdate", "QuoteResponse"
+    "QuoteCreate", "QuoteUpdate", "QuoteResponse",
+    "DepositCreate", "DepositUpdate", "DepositResponse",
+    "WorkOrderCreate", "WorkOrderUpdate", "WorkOrderResponse",
+    "LineItemCreate", "LineItemUpdate", "LineItemResponse",
+    "ChangeOrderCreate", "ChangeOrderUpdate", "ChangeOrderResponse",
+    "DiagnosticCreate", "DiagnosticUpdate", "DiagnosticResponse",
+    "DiagnosticFindingCreate", "DiagnosticFindingUpdate", "DiagnosticFindingResponse",
+    "QualityCheckCreate", "QualityCheckResponse",
+    "BayCreate", "BayUpdate", "BayResponse",
+    "CertificationCreate", "CertificationResponse",
+    "LaborEntryCreate", "LaborEntryResponse"
 ]
