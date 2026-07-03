@@ -271,11 +271,6 @@ class WorkOrderBase(BaseModel):
     authorized_amount: decimal.Decimal = Field(..., ge=0)
     promised_date: Optional[datetime.date] = None
     created_at: datetime.datetime
-    scheduled_at: Optional[datetime.datetime] = None
-    paused_at: Optional[datetime.datetime] = None
-    pause_reason: Optional[str] = Field(None, max_length=500)
-    closed_at: Optional[datetime.datetime] = None
-    archived_at: Optional[datetime.datetime] = None
 
 class WorkOrderCreate(BaseModel):
     quote_id: uuid.UUID
@@ -459,4 +454,221 @@ class LaborEntryCreate(LaborEntryBase):
 
 class LaborEntryResponse(LaborEntryBase):
     labor_entry_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================
+# SECTION 6: Parts & Procurement
+# ================================================================
+
+# PART INSTANCE
+class PartInstanceBase(BaseModel):
+    part_id: uuid.UUID
+    po_line_item_id: Optional[uuid.UUID] = None
+    line_item_id: Optional[uuid.UUID] = None
+    serial_or_lot_number: Optional[str] = Field(None, max_length=100)
+    status: str = Field(..., description="ordered, shipped, received, inspected, rejected, returned, installed")
+    received_at: Optional[datetime.datetime] = None
+    inspected_at: Optional[datetime.datetime] = None
+    rejection_reason: Optional[str] = Field(None, max_length=500)
+    installed_at: Optional[datetime.datetime] = None
+
+class PartInstanceCreate(PartInstanceBase):
+    pass
+
+class PartInstanceUpdate(BaseModel):
+    po_line_item_id: Optional[uuid.UUID] = None
+    line_item_id: Optional[uuid.UUID] = None
+    serial_or_lot_number: Optional[str] = Field(None, max_length=100)
+    status: Optional[str] = None
+    received_at: Optional[datetime.datetime] = None
+    inspected_at: Optional[datetime.datetime] = None
+    rejection_reason: Optional[str] = Field(None, max_length=500)
+    installed_at: Optional[datetime.datetime] = None
+
+class PartInstanceResponse(PartInstanceBase):
+    part_instance_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# PURCHASE ORDER
+class PurchaseOrderBase(BaseModel):
+    vendor_id: uuid.UUID
+    status: str = Field(..., description="submitted, confirmed, partially_shipped, complete, cancelled")
+    submitted_at: datetime.datetime
+    confirmed_at: Optional[datetime.datetime] = None
+    expected_delivery: Optional[datetime.date] = None
+    cancellation_reason: Optional[str] = Field(None, max_length=500)
+
+class PurchaseOrderCreate(BaseModel):
+    vendor_id: uuid.UUID
+    status: str = "submitted"
+    submitted_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+
+class PurchaseOrderUpdate(BaseModel):
+    status: Optional[str] = None
+    confirmed_at: Optional[datetime.datetime] = None
+    expected_delivery: Optional[datetime.date] = None
+    cancellation_reason: Optional[str] = Field(None, max_length=500)
+
+class PurchaseOrderResponse(PurchaseOrderBase):
+    po_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# PO LINE ITEM
+class PoLineItemBase(BaseModel):
+    po_id: uuid.UUID
+    part_id: uuid.UUID
+    qty_ordered: int = Field(..., ge=0)
+    qty_shipped: int = Field(..., ge=0)
+    qty_received: int = Field(..., ge=0)
+
+class PoLineItemCreate(PoLineItemBase):
+    pass
+
+class PoLineItemUpdate(BaseModel):
+    qty_ordered: Optional[int] = Field(None, ge=0)
+    qty_shipped: Optional[int] = Field(None, ge=0)
+    qty_received: Optional[int] = Field(None, ge=0)
+
+class PoLineItemResponse(PoLineItemBase):
+    po_line_item_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# CORE
+class CoreBase(BaseModel):
+    part_id: uuid.UUID
+    charge_amount: decimal.Decimal = Field(..., ge=0)
+    return_status: str = Field(..., description="charged, shipped, credited")
+    shipped_at: Optional[datetime.datetime] = None
+
+class CoreCreate(CoreBase):
+    pass
+
+class CoreUpdate(BaseModel):
+    charge_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+    return_status: Optional[str] = None
+    shipped_at: Optional[datetime.datetime] = None
+
+class CoreResponse(CoreBase):
+    core_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# CREDIT MEMO
+class CreditMemoBase(BaseModel):
+    vendor_id: uuid.UUID
+    amount: decimal.Decimal = Field(..., ge=0)
+    status: str = Field(..., description="pending, issued")
+    core_id: Optional[uuid.UUID] = None
+    part_instance_id: Optional[uuid.UUID] = None
+    issued_at: Optional[datetime.datetime] = None
+
+class CreditMemoCreate(CreditMemoBase):
+    pass
+
+class CreditMemoUpdate(BaseModel):
+    amount: Optional[decimal.Decimal] = Field(None, ge=0)
+    status: Optional[str] = None
+    issued_at: Optional[datetime.datetime] = None
+
+class CreditMemoResponse(CreditMemoBase):
+    credit_memo_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================
+# SECTION 7: Billing & Financials
+# ================================================================
+
+# INVOICE
+class InvoiceBase(BaseModel):
+    work_order_id: uuid.UUID
+    customer_id: uuid.UUID
+    status: str = Field(..., description="issued, disputed, paid, voided, credited")
+    amount_due: decimal.Decimal = Field(..., ge=0)
+    issued_at: datetime.datetime
+    warranty_id: Optional[uuid.UUID] = None
+    credit_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+    credit_reason: Optional[str] = Field(None, max_length=500)
+
+class InvoiceCreate(BaseModel):
+    work_order_id: uuid.UUID
+    customer_id: uuid.UUID
+    status: str = "issued"
+    amount_due: decimal.Decimal = Field(..., ge=0)
+    issued_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+
+class InvoiceUpdate(BaseModel):
+    status: Optional[str] = None
+    amount_due: Optional[decimal.Decimal] = Field(None, ge=0)
+    warranty_id: Optional[uuid.UUID] = None
+    credit_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+    credit_reason: Optional[str] = Field(None, max_length=500)
+
+class InvoiceResponse(InvoiceBase):
+    invoice_id: uuid.UUID
+    total_balance: decimal.Decimal
+    model_config = ConfigDict(from_attributes=True)
+
+
+# DISPUTE
+class DisputeBase(BaseModel):
+    invoice_id: uuid.UUID
+    opened_by: str = Field(..., description="customer or shop")
+    reason: str = Field(..., max_length=1000)
+    status: str = Field(..., description="open, under_review, resolved")
+    opened_at: datetime.datetime
+    resolved_at: Optional[datetime.datetime] = None
+    resolution: Optional[str] = Field(None, max_length=1000)
+
+class DisputeCreate(DisputeBase):
+    pass
+
+class DisputeUpdate(BaseModel):
+    status: Optional[str] = None
+    resolved_at: Optional[datetime.datetime] = None
+    resolution: Optional[str] = Field(None, max_length=1000)
+
+class DisputeResponse(DisputeBase):
+    dispute_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# PAYMENT
+class PaymentBase(BaseModel):
+    invoice_id: uuid.UUID
+    amount: decimal.Decimal = Field(..., gt=0)
+    method: str = Field(..., max_length=50)
+    collected_at: datetime.datetime
+    payer_id: Optional[uuid.UUID] = None
+
+class PaymentCreate(PaymentBase):
+    pass
+
+class PaymentResponse(PaymentBase):
+    payment_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+# STORAGE CHARGE
+class StorageChargeBase(BaseModel):
+    visit_id: uuid.UUID
+    daily_rate: decimal.Decimal = Field(..., ge=0)
+    start_date: datetime.date
+    days_accrued: int = Field(..., ge=0)
+
+class StorageChargeCreate(StorageChargeBase):
+    pass
+
+class StorageChargeUpdate(BaseModel):
+    daily_rate: Optional[decimal.Decimal] = Field(None, ge=0)
+    start_date: Optional[datetime.date] = None
+    days_accrued: Optional[int] = Field(None, ge=0)
+
+class StorageChargeResponse(StorageChargeBase):
+    storage_charge_id: uuid.UUID
+    total_charge: decimal.Decimal
     model_config = ConfigDict(from_attributes=True)
