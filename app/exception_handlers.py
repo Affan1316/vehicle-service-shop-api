@@ -128,6 +128,20 @@ def register_exception_handlers(app: FastAPI) -> None:
             }
         )
 
+    from app.exceptions import NotFoundError
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_error_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        logger.warning("NotFoundError on %s %s: %s", request.method, request.url.path, exc)
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": "not_found",
+                "message": str(exc)
+            }
+        )
+
+
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         # Catch-all for any other unanticipated error (returns 500)
