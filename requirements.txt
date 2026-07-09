@@ -10,4 +10,5 @@ python-jose[cryptography]
 python-multipart
 slowapi
 fastapi-pagination
+python-json-logger
 uvicorn
