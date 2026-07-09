@@ -11,4 +11,5 @@ python-multipart
 slowapi
 fastapi-pagination
 python-json-logger
+secure
 uvicorn
