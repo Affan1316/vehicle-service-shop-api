@@ -15,7 +15,18 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from app.routers.auth_deps import RoleChecker
 from app.routers.pagination_deps import PaginationParams
 
+from app.services import CustomerService
+from app.exceptions import NotFoundError
+
 router = APIRouter()
+
+
+def _with_required_roles(*roles: str):
+    def decorator(operation):
+        operation.__dict__["x-required-roles"] = list(roles)
+        return operation
+    return decorator
+
 
 # --- CUSTOMER ENDPOINTS ---
 
@@ -23,31 +34,24 @@ router = APIRouter()
     "/customers", 
     response_model=CustomerResponse, 
     status_code=status.HTTP_201_CREATED, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+    dependencies=[Depends(RoleChecker(["manager", "advisor"]))],
 )
+@_with_required_roles("manager", "advisor")
 async def create_customer(payload: CustomerCreate, db: AsyncSession = Depends(get_db)):
     """
     Create a new customer profile.
     """
     try:
-        customer = Customer(
-            name=payload.name,
-            customer_type=payload.customer_type,
-            billing_address=payload.billing_address,
-            tax_exempt=payload.tax_exempt
-        )
-        db.add(customer)
-        # Flush executes the SQL INSERT statement to verify constraints and fetch the generated UUID (customer_id)
-        await db.flush()
-        return customer
+        return await CustomerService.create_customer(db, payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get(
     "/customers", 
     response_model=LimitOffsetPage[CustomerResponse], 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))],
 )
+@_with_required_roles("manager", "advisor", "technician")
 async def list_customers(params: PaginationParams = Depends(), db: AsyncSession = Depends(get_db)):
     """
     Retrieve a paginated list of all customers.
@@ -57,62 +61,49 @@ async def list_customers(params: PaginationParams = Depends(), db: AsyncSession 
 @router.get(
     "/customers/{customer_id}", 
     response_model=CustomerResponse, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))],
 )
+@_with_required_roles("manager", "advisor", "technician")
 async def get_customer(customer_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """
     Get details of a single customer by ID.
     """
-    result = await db.execute(select(Customer).where(Customer.customer_id == customer_id))
-    customer = result.scalar_one_or_none()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return customer
+    try:
+        return await CustomerService.get_customer(db, customer_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put(
     "/customers/{customer_id}", 
     response_model=CustomerResponse, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+    dependencies=[Depends(RoleChecker(["manager", "advisor"]))],
 )
+@_with_required_roles("manager", "advisor")
 async def update_customer(customer_id: uuid.UUID, payload: CustomerUpdate, db: AsyncSession = Depends(get_db)):
     """
     Update a customer's fields dynamically.
     """
-    result = await db.execute(select(Customer).where(Customer.customer_id == customer_id))
-    customer = result.scalar_one_or_none()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    
     try:
-        # Update field values only if they are provided in the request payload
-        if payload.name is not None:
-            customer.name = payload.name
-        if payload.customer_type is not None:
-            customer.customer_type = payload.customer_type
-        if payload.billing_address is not None:
-            customer.billing_address = payload.billing_address
-        if payload.tax_exempt is not None:
-            customer.tax_exempt = payload.tax_exempt
-        await db.flush()
-        return customer
+        return await CustomerService.update_customer(db, customer_id, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.delete(
     "/customers/{customer_id}", 
-    dependencies=[Depends(RoleChecker(["manager"]))]
+    dependencies=[Depends(RoleChecker(["manager"]))],
 )
+@_with_required_roles("manager")
 async def delete_customer(customer_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """
     Delete a customer profile.
     """
-    result = await db.execute(select(Customer).where(Customer.customer_id == customer_id))
-    customer = result.scalar_one_or_none()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    
-    await db.delete(customer)
-    return {"message": "Customer deleted successfully"}
+    try:
+        await CustomerService.delete_customer(db, customer_id)
+        return {"message": "Customer deleted successfully"}
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # --- VEHICLE ENDPOINTS ---
@@ -127,23 +118,8 @@ async def create_vehicle(payload: VehicleCreate, db: AsyncSession = Depends(get_
     """
     Register a new vehicle. Checks if the owner (customer) exists first.
     """
-    # Verify owner customer exists in database
-    cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
-    if not cust_res.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Customer with ID {payload.customer_id} does not exist.")
-    
     try:
-        vehicle = Vehicle(
-            vin=payload.vin,
-            customer_id=payload.customer_id,
-            make=payload.make,
-            model=payload.model,
-            year=payload.year,
-            current_mileage=payload.current_mileage
-        )
-        db.add(vehicle)
-        await db.flush()
-        return vehicle
+        return await CustomerService.create_vehicle(db, payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -167,11 +143,10 @@ async def get_vehicle(vin: str, db: AsyncSession = Depends(get_db)):
     """
     Get vehicle details by VIN (Vehicle Identification Number).
     """
-    result = await db.execute(select(Vehicle).where(Vehicle.vin == vin))
-    vehicle = result.scalar_one_or_none()
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found")
-    return vehicle
+    try:
+        return await CustomerService.get_vehicle(db, vin)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.put(
     "/vehicles/{vin}", 
@@ -182,28 +157,10 @@ async def update_vehicle(vin: str, payload: VehicleUpdate, db: AsyncSession = De
     """
     Update vehicle information (e.g. mileage updates).
     """
-    result = await db.execute(select(Vehicle).where(Vehicle.vin == vin))
-    vehicle = result.scalar_one_or_none()
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found")
-    
     try:
-        if payload.customer_id is not None:
-            # Verify new target owner exists in database before moving ownership
-            cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
-            if not cust_res.scalar_one_or_none():
-                raise HTTPException(status_code=400, detail="Target customer does not exist.")
-            vehicle.customer_id = payload.customer_id
-        if payload.make is not None:
-            vehicle.make = payload.make
-        if payload.model is not None:
-            vehicle.model = payload.model
-        if payload.year is not None:
-            vehicle.year = payload.year
-        if payload.current_mileage is not None:
-            vehicle.current_mileage = payload.current_mileage
-        await db.flush()
-        return vehicle
+        return await CustomerService.update_vehicle(db, vin, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -215,10 +172,9 @@ async def delete_vehicle(vin: str, db: AsyncSession = Depends(get_db)):
     """
     Delete a vehicle record.
     """
-    result = await db.execute(select(Vehicle).where(Vehicle.vin == vin))
-    vehicle = result.scalar_one_or_none()
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found")
-    
-    await db.delete(vehicle)
-    return {"message": "Vehicle deleted successfully"}
+    try:
+        await CustomerService.delete_vehicle(db, vin)
+        return {"message": "Vehicle deleted successfully"}
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
