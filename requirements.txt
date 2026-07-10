@@ -8,8 +8,11 @@ psycopg2-binary
 bcrypt
 python-jose[cryptography]
 python-multipart
+uvicorn
+pytest
+pytest-asyncio
+httpx
 slowapi
 fastapi-pagination
-python-json-logger
 secure
-uvicorn
+python-json-logger
