@@ -1,4 +1,4 @@
-from fastapi import FastAPI  # Web framework for building APIs in Python
+from fastapi import FastAPI  
 from fastapi.middleware.cors import CORSMiddleware  # Middleware to enable Cross-Origin Resource Sharing (CORS)
 from fastapi.openapi.utils import get_openapi
 from app.config import settings  # Application configuration settings loaded from environment
@@ -26,6 +26,9 @@ app = FastAPI(
 )
 
 def custom_openapi():
+    #  To avoid wasting CPU cycles, it saves the generated schema into the application 
+    # instance's .openapi_schema attribute. If it is requested again, it returns the cached 
+    # copy instantly instead of rebuilding it.and we are chacking for it here first 
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -37,24 +40,33 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    for route in app.routes:
-        if not getattr(route, "methods", None):
-            continue
+    from fastapi.routing import APIRoute
 
-        for method in route.methods:
-            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
-                continue
+    def process_routes(routes, prefix=""):
+        for route in routes:
+            if isinstance(route, APIRoute):
+                path = (prefix + route.path).replace("//", "/")
+                for method in route.methods:
+                    if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                        continue
+                    operation = openapi_schema.get("paths", {}).get(path, {}).get(method.lower())
+                    if not operation:
+                        continue
+                    required_roles = getattr(route.endpoint, "x-required-roles", None)
+                    if required_roles:
+                        operation["x-required-roles"] = list(required_roles)
+            elif route.__class__.__name__ == "_IncludedRouter":
+                context_prefix = getattr(route.include_context, "prefix", "")
+                process_routes(route.original_router.routes, prefix + context_prefix)
+            elif hasattr(route, "routes"):
+                route_prefix = getattr(route, "path", "")
+                process_routes(route.routes, prefix + route_prefix)
 
-            operation = openapi_schema.get("paths", {}).get(route.path, {}).get(method.lower())
-            if not operation:
-                continue
-
-            required_roles = getattr(getattr(route, "endpoint", None), "x-required-roles", None)
-            if required_roles:
-                operation["x-required-roles"] = list(required_roles)
+    process_routes(app.routes)
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 
 app.openapi = custom_openapi
