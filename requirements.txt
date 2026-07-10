@@ -16,3 +16,4 @@ slowapi
 fastapi-pagination
 secure
 python-json-logger
+prometheus-fastapi-instrumentator

@@ -10,9 +10,10 @@ import json
 import sys
 from datetime import datetime, timezone
 
-from pythonjsonlogger import jsonlogger
 
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
+from pythonjsonlogger import json as json_logger
+
+class CustomJsonFormatter(json_logger.JsonFormatter):
     """Format log records as single-line JSON objects using python-json-logger."""
     def add_fields(self, log_record, record, message_dict):
         super().add_fields(log_record, record, message_dict)

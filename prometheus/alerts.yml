@@ -1,0 +1,29 @@
+groups:
+  - name: auto-shop-alerts
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance {{ $labels.instance }} down"
+          description: "Instance {{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minute."
+
+      - alert: HighAPIErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) by (job) / sum(rate(http_requests_total[5m])) by (job) * 100 > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API Error Rate on {{ $labels.job }}"
+          description: "API 5xx error rate is {{ $value | printf \"%.2f\" }}% over the last 5 minutes."
+
+      - alert: HighAPILatency95thPercentile
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API Latency on {{ $labels.job }}"
+          description: "95th percentile API response time is {{ $value }}s (greater than 0.5s) over the last 5 minutes."

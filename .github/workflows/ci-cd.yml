@@ -1,0 +1,68 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: vehicle_service_shop_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff pytest pytest-asyncio httpx
+        pip install -r requirements.txt
+
+    - name: Lint check with Ruff
+      run: ruff check app/ --exit-zero
+
+    - name: Run test suite
+      env:
+        DATABASE_URL: "postgresql+asyncpg://postgres:postgrespassword@localhost:5432/vehicle_service_shop_test"
+        ENVIRONMENT: "testing"
+        SECRET_KEY: "testsecretkeyfortestingpurposesonlyandnothingelse"
+      run: |
+        python -m pytest tests/
+
+  docker-build:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: auto-shop-api:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

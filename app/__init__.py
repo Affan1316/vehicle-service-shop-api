@@ -1,1 +1,1 @@
-# Vehicle Service Shop API
+# Application package marker

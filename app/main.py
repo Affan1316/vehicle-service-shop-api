@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded  # Exception raised when a user exc
 from slowapi import _rate_limit_exceeded_handler  # Standard handler to convert RateLimitExceeded to an HTTP response
 import secure  # Library to automatically apply HTTP security headers (X-Frame-Options, HSTS, etc.)
 from fastapi_pagination import add_pagination  # Helper to register pagination mechanisms with the FastAPI app
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # 1. INITIALIZE STRUCTURED LOGGING
 # We run setup_logging immediately at startup so that all subsequent logs 
@@ -153,6 +154,10 @@ app.include_router(resources.router, tags=["Shop Resources"])
 # 10. FASTAPI PAGINATION EXTENSION
 # Initializes the fastapi-pagination framework to handle automatic pagination.
 add_pagination(app)
+
+# 11. PROMETHEUS METRICS INSTRUMENTATION
+# Instrument the FastAPI app and expose a /metrics endpoint for Prometheus scraping.
+Instrumentator().instrument(app).expose(app)
 
 @app.get("/")
 async def root():

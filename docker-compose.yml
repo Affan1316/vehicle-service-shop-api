@@ -41,5 +41,24 @@ services:
         uvicorn app.main:app --host 0.0.0.0 --port 8000
       "
 
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: auto_shop_prometheus
+    restart: always
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - promdata:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
 volumes:
   pgdata:
+  promdata:

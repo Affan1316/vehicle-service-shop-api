@@ -1,0 +1,28 @@
+services:
+  # The FastAPI backend service
+  - type: web
+    name: auto-shop-api
+    runtime: docker
+    plan: free # Free tier instance
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: auto-shop-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true # Generates a secure random key automatically
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000,https://your-frontend-domain.com"
+      - key: LOG_LEVEL
+        value: INFO
+    # Run database migrations and seed baseline data, then start the FastAPI application
+    startCommand: python -m alembic upgrade head && python seed_db.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+databases:
+  # The PostgreSQL database
+  - name: auto-shop-db
+    plan: free # Free tier PostgreSQL (active for 90 days on Render Free, then requires upgrade or backup/recreate)
+    databaseName: vehicle_service_shop
+    user: postgres
