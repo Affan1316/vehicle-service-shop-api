@@ -41,6 +41,13 @@ jobs:
     - name: Lint check with Ruff
       run: ruff check app/ --exit-zero
 
+    - name: Run migrations
+      env:
+        DATABASE_URL: "postgresql+asyncpg://postgres:postgrespassword@localhost:5432/vehicle_service_shop_test"
+        SECRET_KEY: "testsecretkeyfortestingpurposesonlyandnothingelse"
+      run: |
+        python -m alembic upgrade head
+
     - name: Run test suite
       env:
         DATABASE_URL: "postgresql+asyncpg://postgres:postgrespassword@localhost:5432/vehicle_service_shop_test"
