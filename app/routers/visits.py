@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.database import get_db
-from app.models.models import Customer, Vehicle, Appointment, Visit
+from app.models.models import Customer, Vehicle, Appointment, Visit, User
 from app.schemas import (
     AppointmentCreate, AppointmentUpdate, AppointmentResponse,
     VisitCreate, VisitUpdate, VisitResponse
@@ -84,14 +84,22 @@ async def create_visit(payload: VisitCreate, db: AsyncSession = Depends(get_db))
 
 @router.get(
     "/visits", 
-    response_model=LimitOffsetPage[VisitResponse], 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+    response_model=LimitOffsetPage[VisitResponse]
 )
-async def list_visits(params: PaginationParams = Depends(), db: AsyncSession = Depends(get_db)):
+async def list_visits(
+    params: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
+):
     """
     List vehicle service visits with pagination.
     """
-    return await apaginate(db, select(Visit), params)
+    query = select(Visit)
+    if current_user.role == "customer":
+        if current_user.customer_id is None:
+            raise HTTPException(status_code=400, detail="User is not linked to a customer profile.")
+        query = query.where(Visit.customer_id == current_user.customer_id)
+    return await apaginate(db, query, params)
 
 @router.put(
     "/visits/{visit_id}", 

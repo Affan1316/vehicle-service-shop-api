@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.database import get_db
-from app.models.models import Customer, Vehicle
+from app.models.models import Customer, Vehicle, User
 from app.schemas import (
     CustomerCreate, CustomerUpdate, CustomerResponse,
     VehicleCreate, VehicleUpdate, VehicleResponse
@@ -125,14 +125,22 @@ async def create_vehicle(payload: VehicleCreate, db: AsyncSession = Depends(get_
 
 @router.get(
     "/vehicles", 
-    response_model=LimitOffsetPage[VehicleResponse], 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+    response_model=LimitOffsetPage[VehicleResponse]
 )
-async def list_vehicles(params: PaginationParams = Depends(), db: AsyncSession = Depends(get_db)):
+async def list_vehicles(
+    params: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
+):
     """
     Retrieve all registered vehicles with pagination.
     """
-    return await apaginate(db, select(Vehicle), params)
+    query = select(Vehicle)
+    if current_user.role == "customer":
+        if current_user.customer_id is None:
+            raise HTTPException(status_code=400, detail="User is not linked to a customer profile.")
+        query = query.where(Vehicle.customer_id == current_user.customer_id)
+    return await apaginate(db, query, params)
 
 @router.get(
     "/vehicles/{vin}", 
