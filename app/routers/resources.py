@@ -1,3 +1,4 @@
+import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,4 +75,22 @@ async def list_bays(params: PaginationParams = Depends(), db: AsyncSession = Dep
     List service bays using pagination.
     """
     return await apaginate(db, select(Bay), params)
+
+@router.put(
+    "/bays/{bay_id}", 
+    response_model=BayResponse, 
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+)
+async def update_bay(
+    bay_id: uuid.UUID, 
+    payload: BayUpdate, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a service bay status or work order allocation.
+    """
+    try:
+        return await ResourceService.update_bay(db, bay_id, payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 

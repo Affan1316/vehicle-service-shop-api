@@ -177,11 +177,18 @@ async def create_deposit(
 async def create_payment(
     payload: PaymentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["manager", "advisor"]))
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
 ):
     """
     Record a payment received for an invoice.
     """
+    if current_user.role == "customer":
+        try:
+            invoice = await BillingService.get_invoice(db, payload.invoice_id)
+            if invoice.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Not authorized to pay for this invoice.")
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
     try:
         return await BillingService.create_payment(db, payload)
     except ValueError as e:

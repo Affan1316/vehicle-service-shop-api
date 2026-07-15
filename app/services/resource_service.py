@@ -1,7 +1,8 @@
+import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.models import Technician, Bay
-from app.schemas.schemas import TechnicianCreate, BayCreate
+from app.schemas.schemas import TechnicianCreate, BayCreate, BayUpdate
 
 
 class ResourceService:
@@ -33,5 +34,24 @@ class ResourceService:
             held_until=payload.held_until
         )
         db.add(bay)
+        await db.flush()
+        return bay
+
+    @staticmethod
+    async def update_bay(db: AsyncSession, bay_id: uuid.UUID, payload: BayUpdate) -> Bay:
+        res = await db.execute(select(Bay).where(Bay.bay_id == bay_id))
+        bay = res.scalar_one_or_none()
+        if not bay:
+            raise ValueError(f"Bay with ID {bay_id} not found.")
+
+        if payload.status is not None:
+            bay.status = payload.status
+        if payload.bay_type is not None:
+            bay.bay_type = payload.bay_type
+        if "current_work_order_id" in payload.model_fields_set:
+            bay.current_work_order_id = payload.current_work_order_id
+        if "held_until" in payload.model_fields_set:
+            bay.held_until = payload.held_until
+
         await db.flush()
         return bay

@@ -2,8 +2,8 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app.models.models import Customer, Vehicle, Quote, WorkOrder, LineItem
-from app.schemas.schemas import WorkOrderCreate, WorkOrderUpdate, LineItemCreate, LineItemUpdate
+from app.models.models import Customer, Vehicle, Quote, WorkOrder, LineItem, LaborEntry, Technician
+from app.schemas.schemas import WorkOrderCreate, WorkOrderUpdate, LineItemCreate, LineItemUpdate, LaborEntryCreate
 from app.exceptions import NotFoundError
 
 
@@ -130,3 +130,56 @@ class JobService:
 
         await db.flush()
         return li
+
+    @staticmethod
+    async def create_labor_entry(db: AsyncSession, work_order_id: uuid.UUID, payload: LaborEntryCreate) -> LaborEntry:
+        # Verify work order exists
+        wo_res = await db.execute(select(WorkOrder).where(WorkOrder.work_order_id == work_order_id))
+        if not wo_res.scalar_one_or_none():
+            raise NotFoundError("WorkOrder not found")
+
+        # Verify line item belongs to work order
+        li_res = await db.execute(
+            select(LineItem)
+            .where(LineItem.line_item_id == payload.line_item_id)
+            .where(LineItem.work_order_id == work_order_id)
+        )
+        if not li_res.scalar_one_or_none():
+            raise ValueError("LineItem not found or does not belong to this work order.")
+
+        # Verify technician exists
+        tech_res = await db.execute(select(Technician).where(Technician.tech_id == payload.tech_id))
+        if not tech_res.scalar_one_or_none():
+            raise ValueError("Technician not found.")
+
+        entry = LaborEntry(
+            tech_id=payload.tech_id,
+            line_item_id=payload.line_item_id,
+            work_date=payload.work_date,
+            hours=payload.hours,
+        )
+        db.add(entry)
+        await db.flush()
+        return entry
+
+    @staticmethod
+    async def get_labor_entries(db: AsyncSession, work_order_id: uuid.UUID) -> list[LaborEntry]:
+        # Verify work order exists
+        wo_res = await db.execute(select(WorkOrder).where(WorkOrder.work_order_id == work_order_id))
+        if not wo_res.scalar_one_or_none():
+            raise NotFoundError("WorkOrder not found")
+
+        # Get all line item IDs for this work order
+        li_res = await db.execute(
+            select(LineItem.line_item_id).where(LineItem.work_order_id == work_order_id)
+        )
+        li_ids = [row[0] for row in li_res.all()]
+
+        if not li_ids:
+            return []
+
+        result = await db.execute(
+            select(LaborEntry).where(LaborEntry.line_item_id.in_(li_ids))
+        )
+        return list(result.scalars().all())
+

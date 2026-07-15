@@ -9,7 +9,8 @@ from app.database import get_db
 from app.models.models import Customer, Vehicle, Quote, WorkOrder, LineItem
 from app.schemas import (
     WorkOrderCreate, WorkOrderUpdate, WorkOrderResponse,
-    LineItemCreate, LineItemUpdate, LineItemResponse
+    LineItemCreate, LineItemUpdate, LineItemResponse,
+    LaborEntryCreate, LaborEntryResponse
 )
 from fastapi_pagination import LimitOffsetPage
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -81,6 +82,38 @@ async def update_work_order(work_order_id: uuid.UUID, payload: WorkOrderUpdate, 
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# --- LABOR ENTRY ENDPOINTS ---
+
+@router.post(
+    "/work-orders/{work_order_id}/labor-entries",
+    response_model=LaborEntryResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+)
+async def create_labor_entry(work_order_id: uuid.UUID, payload: LaborEntryCreate, db: AsyncSession = Depends(get_db)):
+    """
+    Log a labor time entry against a line item within a work order.
+    """
+    try:
+        return await JobService.create_labor_entry(db, work_order_id, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get(
+    "/work-orders/{work_order_id}/labor-entries",
+    response_model=List[LaborEntryResponse],
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+)
+async def list_labor_entries(work_order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    List all labor entries for a given work order.
+    """
+    try:
+        return await JobService.get_labor_entries(db, work_order_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 # --- LINE ITEM ENDPOINTS ---
 
 @router.post(
