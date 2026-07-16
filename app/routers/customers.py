@@ -111,13 +111,19 @@ async def delete_customer(customer_id: uuid.UUID, db: AsyncSession = Depends(get
 @router.post(
     "/vehicles", 
     response_model=VehicleResponse, 
-    status_code=status.HTTP_201_CREATED, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+    status_code=status.HTTP_201_CREATED
 )
-async def create_vehicle(payload: VehicleCreate, db: AsyncSession = Depends(get_db)):
+async def create_vehicle(
+    payload: VehicleCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
     """
     Register a new vehicle. Checks if the owner (customer) exists first.
     """
+    if current_user.role == "customer":
+        if current_user.customer_id != payload.customer_id:
+            raise HTTPException(status_code=403, detail="Not authorized to register vehicles for other customers.")
     try:
         return await CustomerService.create_vehicle(db, payload)
     except ValueError as e:

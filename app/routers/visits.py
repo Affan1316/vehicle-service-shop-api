@@ -25,13 +25,19 @@ router = APIRouter()
 @router.post(
     "/appointments", 
     response_model=AppointmentResponse, 
-    status_code=status.HTTP_201_CREATED, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+    status_code=status.HTTP_201_CREATED
 )
-async def create_appointment(payload: AppointmentCreate, db: AsyncSession = Depends(get_db)):
+async def create_appointment(
+    payload: AppointmentCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
     """
     Book a new customer appointment. Checks if customer and vehicle exist first.
     """
+    if current_user.role == "customer":
+        if current_user.customer_id != payload.customer_id:
+            raise HTTPException(status_code=403, detail="Not authorized to book appointments for other customers.")
     try:
         return await VisitService.create_appointment(db, payload)
     except ValueError as e:
@@ -39,14 +45,22 @@ async def create_appointment(payload: AppointmentCreate, db: AsyncSession = Depe
 
 @router.get(
     "/appointments", 
-    response_model=LimitOffsetPage[AppointmentResponse], 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
+    response_model=LimitOffsetPage[AppointmentResponse]
 )
-async def list_appointments(params: PaginationParams = Depends(), db: AsyncSession = Depends(get_db)):
+async def list_appointments(
+    params: PaginationParams = Depends(), 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
+):
     """
     List appointments with pagination.
     """
-    return await apaginate(db, select(Appointment), params)
+    query = select(Appointment)
+    if current_user.role == "customer":
+        if current_user.customer_id is None:
+            raise HTTPException(status_code=400, detail="User is not linked to a customer profile.")
+        query = query.where(Appointment.customer_id == current_user.customer_id)
+    return await apaginate(db, query, params)
 
 @router.put(
     "/appointments/{appointment_id}", 
