@@ -3,14 +3,18 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.models import Customer, Vehicle, Quote, WorkOrder, Invoice, Deposit, Payment, User
+from app.models.models import Customer, Vehicle, Quote, WorkOrder, Invoice, Deposit, Payment, User, Dispute, Warranty, WarrantyClaim
 from app.schemas import (
     QuoteCreate, QuoteUpdate, QuoteResponse,
-    InvoiceCreate, InvoiceUpdate, InvoiceResponse,
+    InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceDetailResponse,
     DepositCreate, DepositUpdate, DepositResponse,
-    PaymentCreate, PaymentResponse
+    PaymentCreate, PaymentResponse,
+    DisputeCreate, DisputeUpdate, DisputeResponse,
+    WarrantyCreate, WarrantyUpdate, WarrantyResponse,
+    WarrantyClaimCreate, WarrantyClaimUpdate, WarrantyClaimResponse
 )
 from fastapi_pagination import LimitOffsetPage
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -47,7 +51,7 @@ async def list_quotes(
     """
     Retrieve all quotes with pagination.
     """
-    query = select(Quote)
+    query = select(Quote).options(selectinload(Quote.work_order))
     if current_user.role == "customer":
         if current_user.customer_id is None:
             raise HTTPException(status_code=400, detail="User is not linked to a customer profile.")
@@ -78,6 +82,12 @@ async def update_quote(
             )
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
+            
+    elif current_user.role == "advisor":
+        if payload.status == "approved":
+            raise HTTPException(status_code=403, detail="Advisors cannot approve quotes on behalf of customers. Manager override or customer approval is required.")
+        if payload.total_amount is not None:
+            raise HTTPException(status_code=403, detail="Advisors cannot manually override the quote total amount. Manager approval required.")
 
     try:
         return await BillingService.update_quote(db, quote_id, payload)
@@ -136,6 +146,23 @@ async def get_invoice(
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+@router.get("/invoices/{invoice_id}/details", response_model=InvoiceDetailResponse)
+async def get_invoice_details(
+    invoice_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
+    """
+    Retrieve itemized labor and part details for a single invoice.
+    """
+    try:
+        details = await BillingService.get_invoice_details(db, invoice_id)
+        if current_user.role == "customer" and details.customer_id != current_user.customer_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view this invoice's details.")
+        return details
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 @router.put("/invoices/{invoice_id}", response_model=InvoiceResponse)
 async def update_invoice(
     invoice_id: uuid.UUID,
@@ -146,6 +173,12 @@ async def update_invoice(
     """
     Modify an invoice status, adjust amount due, or apply credit.
     """
+    if current_user.role == "advisor":
+        if payload.amount_due is not None:
+            raise HTTPException(status_code=403, detail="Advisors cannot manually override the total amount due. Manager approval required.")
+        if payload.credit_amount is not None and payload.credit_amount > 50:
+            raise HTTPException(status_code=403, detail="Advisors cannot apply credits greater than $50. Manager approval required.")
+            
     try:
         return await BillingService.update_invoice(db, invoice_id, payload)
     except NotFoundError as e:
@@ -193,3 +226,150 @@ async def create_payment(
         return await BillingService.create_payment(db, payload)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- DISPUTE ENDPOINTS ---
+
+@router.post(
+    "/invoices/{invoice_id}/disputes",
+    response_model=DisputeResponse,
+    status_code=status.HTTP_201_CREATED
+)
+async def create_dispute(
+    invoice_id: uuid.UUID, 
+    payload: DisputeCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
+    """
+    Open a dispute against an invoice.
+    """
+    if current_user.role == "customer":
+        try:
+            invoice = await BillingService.get_invoice(db, invoice_id)
+            if invoice.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Not authorized to dispute this invoice.")
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    try:
+        return await BillingService.create_dispute(db, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get(
+    "/invoices/{invoice_id}/disputes",
+    response_model=List[DisputeResponse]
+)
+async def list_invoice_disputes(
+    invoice_id: uuid.UUID, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
+    """
+    List disputes for a single invoice.
+    """
+    if current_user.role == "customer":
+        try:
+            invoice = await BillingService.get_invoice(db, invoice_id)
+            if invoice.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Not authorized to view disputes for this invoice.")
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    return await BillingService.get_invoice_disputes(db, invoice_id)
+
+@router.put(
+    "/disputes/{dispute_id}",
+    response_model=DisputeResponse,
+    dependencies=[Depends(RoleChecker(["manager"]))]
+)
+async def update_dispute(dispute_id: uuid.UUID, payload: DisputeUpdate, db: AsyncSession = Depends(get_db)):
+    """
+    Update/resolve a dispute.
+    """
+    try:
+        return await BillingService.update_dispute(db, dispute_id, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- WARRANTY ENDPOINTS ---
+
+@router.post(
+    "/work-orders/{work_order_id}/warranties",
+    response_model=WarrantyResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+)
+async def create_warranty(work_order_id: uuid.UUID, payload: WarrantyCreate, db: AsyncSession = Depends(get_db)):
+    """
+    Issue a new warranty.
+    """
+    try:
+        return await BillingService.create_warranty(db, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get(
+    "/warranties/{warranty_id}",
+    response_model=WarrantyResponse,
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "customer"]))]
+)
+async def get_warranty(warranty_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Get a warranty by ID.
+    """
+    try:
+        return await BillingService.get_warranty(db, warranty_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.post(
+    "/warranties/{warranty_id}/claims",
+    response_model=WarrantyClaimResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+)
+async def create_warranty_claim(warranty_id: uuid.UUID, payload: WarrantyClaimCreate, db: AsyncSession = Depends(get_db)):
+    """
+    File a warranty claim.
+    """
+    try:
+        return await BillingService.create_warranty_claim(db, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get(
+    "/warranties/{warranty_id}/claims",
+    response_model=List[WarrantyClaimResponse],
+    dependencies=[Depends(RoleChecker(["manager", "advisor", "customer"]))]
+)
+async def list_warranty_claims(warranty_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    List claims filed against a warranty.
+    """
+    return await BillingService.get_warranty_claims(db, warranty_id)
+
+@router.put(
+    "/claims/{claim_id}",
+    response_model=WarrantyClaimResponse,
+    dependencies=[Depends(RoleChecker(["manager"]))]
+)
+async def update_warranty_claim(claim_id: uuid.UUID, payload: WarrantyClaimUpdate, db: AsyncSession = Depends(get_db)):
+    """
+    Approve, deny, or resolve a claim.
+    """
+    try:
+        return await BillingService.update_warranty_claim(db, claim_id, payload)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+

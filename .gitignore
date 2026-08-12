@@ -156,3 +156,19 @@ cython_debug/
 
 # Rebuilt legacy directory
 rebuilt/
+
+# Local database files
+app.db
+*.db
+
+# Utility scripts with local credentials
+add_certs.py
+check_certs.py
+check_db.py
+clear_db.py
+update_db.py
+seed_certs.py
+seed_template.py
+
+# Large presentation files
+presentation_files.txt

@@ -16,7 +16,9 @@ A FastAPI-based backend application for managing an auto repair shop. It provide
 - **RBAC (Role-Based Access Control):** Permissions structured for roles: `manager`, `advisor`, `technician`, and `customer`.
 - **Customers & Vehicles:** Manage customer profiles and vehicle information.
 - **Appointments & Visits:** Handle appointments booking and customer check-in/out.
+- **Diagnostic Inspections:** Conduct vehicle diagnostics, record findings, and automatically generate draft quotes and work orders.
 - **Job Execution:** Manage Work Orders and specific tasks/labor via Line Items.
+- **Inventory & Procurement:** Manage parts catalog, vendors, purchase orders, and track part instances.
 - **Shop Resources:** Allocate technicians and manage shop service bays.
 - **Billing & Financials:** Create Quotes, generate Invoices, record pre-payment Deposits, and process client Payments.
 

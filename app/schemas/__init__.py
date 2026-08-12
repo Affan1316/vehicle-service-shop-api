@@ -23,12 +23,12 @@ from app.schemas.schemas import (
     PoLineItemCreate, PoLineItemUpdate, PoLineItemResponse,
     CoreCreate, CoreUpdate, CoreResponse,
     CreditMemoCreate, CreditMemoUpdate, CreditMemoResponse,
-    InvoiceCreate, InvoiceUpdate, InvoiceResponse,
+    InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceDetailResponse,
     DisputeCreate, DisputeUpdate, DisputeResponse,
     PaymentCreate, PaymentResponse,
     StorageChargeCreate, StorageChargeUpdate, StorageChargeResponse,
     WarrantyCreate, WarrantyUpdate, WarrantyResponse,
-    WarrantyClaimCreate, WarrantyClaimResponse,
+    WarrantyClaimCreate, WarrantyClaimUpdate, WarrantyClaimResponse,
     UserCreate, UserResponse, Token, TokenData, PaginatedResponse, RefreshTokenRequest
 )
 
@@ -57,11 +57,11 @@ __all__ = [
     "PoLineItemCreate", "PoLineItemUpdate", "PoLineItemResponse",
     "CoreCreate", "CoreUpdate", "CoreResponse",
     "CreditMemoCreate", "CreditMemoUpdate", "CreditMemoResponse",
-    "InvoiceCreate", "InvoiceUpdate", "InvoiceResponse",
+    "InvoiceCreate", "InvoiceUpdate", "InvoiceResponse", "InvoiceDetailResponse",
     "DisputeCreate", "DisputeUpdate", "DisputeResponse",
     "PaymentCreate", "PaymentResponse",
     "StorageChargeCreate", "StorageChargeUpdate", "StorageChargeResponse",
     "WarrantyCreate", "WarrantyUpdate", "WarrantyResponse",
-    "WarrantyClaimCreate", "WarrantyClaimResponse",
+    "WarrantyClaimCreate", "WarrantyClaimUpdate", "WarrantyClaimResponse",
     "UserCreate", "UserResponse", "Token", "TokenData", "PaginatedResponse", "RefreshTokenRequest"
 ]

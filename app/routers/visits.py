@@ -64,13 +64,29 @@ async def list_appointments(
 
 @router.put(
     "/appointments/{appointment_id}", 
-    response_model=AppointmentResponse, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
+    response_model=AppointmentResponse,
 )
-async def update_appointment(appointment_id: uuid.UUID, payload: AppointmentUpdate, db: AsyncSession = Depends(get_db)):
+async def update_appointment(
+    appointment_id: uuid.UUID,
+    payload: AppointmentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
     """
     Update appointment details.
+    Customers may only cancel their own appointments.
     """
+    if current_user.role == "customer":
+        # Customers can only cancel, not confirm or change other fields
+        if payload.status != "cancelled":
+            raise HTTPException(status_code=403, detail="Customers may only cancel appointments.")
+        # Verify ownership
+        result = await db.execute(select(Appointment).where(Appointment.appointment_id == appointment_id))
+        appointment = result.scalar_one_or_none()
+        if appointment is None:
+            raise HTTPException(status_code=404, detail="Appointment not found.")
+        if appointment.customer_id != current_user.customer_id:
+            raise HTTPException(status_code=403, detail="Not authorized to modify this appointment.")
     try:
         return await VisitService.update_appointment(db, appointment_id, payload)
     except NotFoundError as e:

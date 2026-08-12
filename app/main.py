@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware  # Middleware to enable Cross
 from fastapi.openapi.utils import get_openapi
 from app.config import settings  # Application configuration settings loaded from environment
 from app.logging_config import setup_logging  # Function to configure structured JSON logging
-from app.routers import customers, visits, jobs, billing, resources, auth  # Modular API router groups
+from app.routers import customers, visits, jobs, billing, resources, auth, inventory, diagnostics  # Modular API router groups
 from app.exception_handlers import register_exception_handlers  # Global database/app error handler registration
 from app.middleware import RequestLoggingMiddleware  # Custom middleware to track request duration and correlation IDs
 
@@ -118,7 +118,11 @@ async def add_security_headers(request: Request, call_next):
 # 7. CORS MIDDLEWARE
 # Cross-Origin Resource Sharing (CORS) determines which frontend client domains 
 # are allowed to make API calls to this backend.
-origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+origins = []
+for origin in settings.CORS_ORIGINS.split(","):
+    clean_origin = origin.strip()
+    if clean_origin:
+        origins.append(clean_origin)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -144,12 +148,14 @@ app.add_middleware(
 
 # 9. INCLUDE API ROUTERS
 # Mount the modular routers that handle different resource models of our application.
-app.include_router(auth.router)
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(customers.router, tags=["Customers & Vehicles"])
 app.include_router(visits.router, tags=["Appointments & Visits"])
 app.include_router(jobs.router, tags=["Work Orders & Line Items"])
 app.include_router(billing.router, tags=["Billing & Financials"])
 app.include_router(resources.router, tags=["Shop Resources"])
+app.include_router(inventory.router, tags=["Inventory & Procurement"])
+app.include_router(diagnostics.router, tags=["Diagnostic Inspections"])
 
 # 10. FASTAPI PAGINATION EXTENSION
 # Initializes the fastapi-pagination framework to handle automatic pagination.

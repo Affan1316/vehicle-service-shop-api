@@ -1,6 +1,7 @@
+import decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.models.models import User
+from app.models.models import User, Customer, Technician
 from app.schemas.schemas import UserCreate
 from app.security import get_password_hash, verify_password
 from jose import jwt, JWTError
@@ -18,13 +19,35 @@ class AuthService:
         if res.scalar_one_or_none():
             raise ValueError("Username or email already registered.")
 
+        new_customer_id = payload.customer_id
+        new_tech_id = payload.tech_id
+
+        if payload.role == "customer" and not new_customer_id:
+            customer = Customer(
+                name=payload.username,
+                customer_type="individual",
+                tax_exempt=False
+            )
+            db.add(customer)
+            await db.flush()
+            new_customer_id = customer.customer_id
+
+        elif payload.role == "technician" and not new_tech_id:
+            tech = Technician(
+                name=payload.username,
+                hourly_rate=decimal.Decimal("50.00")
+            )
+            db.add(tech)
+            await db.flush()
+            new_tech_id = tech.tech_id
+
         user = User(
             username=payload.username,
             email=payload.email,
             password_hash=get_password_hash(payload.password),
             role=payload.role,
-            customer_id=payload.customer_id,
-            tech_id=payload.tech_id
+            customer_id=new_customer_id,
+            tech_id=new_tech_id
         )
         db.add(user)
         await db.flush()

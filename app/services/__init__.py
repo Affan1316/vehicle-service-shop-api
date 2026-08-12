@@ -4,6 +4,7 @@ from app.services.visit_service import VisitService
 from app.services.job_service import JobService
 from app.services.billing_service import BillingService
 from app.services.resource_service import ResourceService
+from app.services.inventory_service import InventoryService
 
 __all__ = [
     "AuthService",
@@ -11,5 +12,6 @@ __all__ = [
     "VisitService",
     "JobService",
     "BillingService",
-    "ResourceService"
+    "ResourceService",
+    "InventoryService"
 ]

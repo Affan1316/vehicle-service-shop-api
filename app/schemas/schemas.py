@@ -28,6 +28,14 @@ class CustomerResponse(CustomerBase):
     customer_id: uuid.UUID
     model_config = ConfigDict(from_attributes=True)
 
+class TimelineEventResponse(BaseModel):
+    title: str
+    date: datetime.datetime
+    description: str
+    amount: Optional[str] = None
+    type: str
+    status: str
+
 
 # VENDOR
 class VendorBase(BaseModel):
@@ -58,8 +66,21 @@ class TechnicianUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     hourly_rate: Optional[decimal.Decimal] = Field(None, ge=0)
 
+class CertificationCreate(BaseModel):
+    cert_type: str = Field(..., max_length=100)
+    expiry_date: datetime.date
+
+class CertificationResponse(BaseModel):
+    cert_id: uuid.UUID
+    tech_id: uuid.UUID
+    cert_type: str
+    expiry_date: datetime.date
+    model_config = ConfigDict(from_attributes=True)
+
 class TechnicianResponse(TechnicianBase):
     tech_id: uuid.UUID
+    certifications: List[CertificationResponse] = Field(default_factory=list)
+    has_expiring_cert: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -69,6 +90,7 @@ class PartBase(BaseModel):
     category: str = Field(..., max_length=100)
     quantity_on_hand: int = Field(..., ge=0)
     is_returnable: bool = Field(default=True)
+    warranty_required: bool = False
 
 class PartCreate(PartBase):
     pass
@@ -78,6 +100,7 @@ class PartUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     quantity_on_hand: Optional[int] = Field(None, ge=0)
     is_returnable: Optional[bool] = None
+    warranty_required: Optional[bool] = None
 
 class PartResponse(PartBase):
     part_id: uuid.UUID
@@ -140,19 +163,27 @@ class AppointmentBase(BaseModel):
     vehicle_id: str = Field(..., min_length=17, max_length=17)
     requested_date: datetime.date
     confirmed_date: Optional[datetime.date] = None
-    status: str = Field(..., description="Must be 'requested', 'confirmed', or 'cancelled'")
+    status: str = Field(..., description="Must be 'requested', 'confirmed', 'cancelled', or 'checked_in'")
     bay_id: Optional[uuid.UUID] = None
+    preferred_time: Optional[str] = None
 
-class AppointmentCreate(AppointmentBase):
-    pass
+class AppointmentCreate(BaseModel):
+    customer_id: uuid.UUID
+    vehicle_id: str = Field(..., min_length=17, max_length=17)
+    requested_date: datetime.date
+    confirmed_date: Optional[datetime.date] = None
+    status: str = "requested"
+    bay_id: Optional[uuid.UUID] = None
+    preferred_time: Optional[str] = None
 
 class AppointmentUpdate(BaseModel):
     customer_id: Optional[uuid.UUID] = None
     vehicle_id: Optional[str] = Field(None, min_length=17, max_length=17)
     requested_date: Optional[datetime.date] = None
     confirmed_date: Optional[datetime.date] = None
-    status: Optional[str] = Field(None, description="Must be 'requested', 'confirmed', or 'cancelled'")
+    status: Optional[str] = Field(None, description="Must be 'requested', 'confirmed', 'cancelled', or 'checked_in'")
     bay_id: Optional[uuid.UUID] = None
+    preferred_time: Optional[str] = None
 
 class AppointmentResponse(AppointmentBase):
     appointment_id: uuid.UUID
@@ -167,6 +198,7 @@ class VisitBase(BaseModel):
     checked_in_at: datetime.datetime
     checked_out_at: Optional[datetime.datetime] = None
     status: str = Field(..., description="checked_in, in_diagnosis, awaiting_quote, in_service, awaiting_pickup, completed")
+    walk_in: bool = False
 
 class VisitCreate(BaseModel):
     vehicle_id: str = Field(..., min_length=17, max_length=17)
@@ -221,6 +253,7 @@ class QuoteUpdate(BaseModel):
 
 class QuoteResponse(QuoteBase):
     quote_id: uuid.UUID
+    has_work_order: bool = Field(default=False)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -276,6 +309,8 @@ class WorkOrderBase(BaseModel):
     pause_reason: Optional[str] = Field(None, max_length=500)
     closed_at: Optional[datetime.datetime] = None
     archived_at: Optional[datetime.datetime] = None
+    diagnostic_bypassed: bool = False
+    bypass_reason: Optional[str] = Field(None, max_length=500)
 
 class WorkOrderCreate(BaseModel):
     quote_id: uuid.UUID
@@ -286,6 +321,8 @@ class WorkOrderCreate(BaseModel):
     authorized_amount: decimal.Decimal = Field(..., ge=0)
     promised_date: Optional[datetime.date] = None
     created_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+    diagnostic_bypassed: bool = False
+    bypass_reason: Optional[str] = Field(None, max_length=500)
 
 class WorkOrderUpdate(BaseModel):
     bay_id: Optional[uuid.UUID] = None
@@ -297,10 +334,14 @@ class WorkOrderUpdate(BaseModel):
     pause_reason: Optional[str] = Field(None, max_length=500)
     closed_at: Optional[datetime.datetime] = None
     archived_at: Optional[datetime.datetime] = None
+    diagnostic_bypassed: Optional[bool] = None
+    bypass_reason: Optional[str] = Field(None, max_length=500)
 
 class WorkOrderResponse(WorkOrderBase):
     work_order_id: uuid.UUID
     total_cost: decimal.Decimal
+    has_invoice: bool = False
+    line_items: List["LineItemResponse"] = []
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -314,6 +355,8 @@ class LineItemBase(BaseModel):
     hold_reason: Optional[str] = Field(None, max_length=500)
     started_at: Optional[datetime.datetime] = None
     completed_at: Optional[datetime.datetime] = None
+    is_complimentary: bool = False
+    warranty_required: bool = False
 
 class LineItemCreate(LineItemBase):
     pass
@@ -326,6 +369,8 @@ class LineItemUpdate(BaseModel):
     hold_reason: Optional[str] = Field(None, max_length=500)
     started_at: Optional[datetime.datetime] = None
     completed_at: Optional[datetime.datetime] = None
+    is_complimentary: Optional[bool] = None
+    warranty_required: Optional[bool] = None
 
 class LineItemResponse(LineItemBase):
     line_item_id: uuid.UUID
@@ -358,6 +403,51 @@ class ChangeOrderResponse(ChangeOrderBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+# DIAGNOSTIC FINDING
+class DiagnosticFindingBase(BaseModel):
+    report_id: uuid.UUID
+    description: str = Field(..., max_length=1000)
+    recommended_service: Optional[str] = Field(None, max_length=500)
+    is_critical: bool = False
+
+class DiagnosticFindingCreate(DiagnosticFindingBase):
+    pass
+
+class DiagnosticFindingUpdate(BaseModel):
+    description: Optional[str] = Field(None, max_length=1000)
+    recommended_service: Optional[str] = Field(None, max_length=500)
+    is_critical: Optional[bool] = None
+
+# DIAGNOSTIC TEMPLATE
+class DiagnosticTemplateItemBase(BaseModel):
+    description: str = Field(..., max_length=500)
+
+class DiagnosticTemplateItemCreate(DiagnosticTemplateItemBase):
+    pass
+
+class DiagnosticTemplateItemResponse(DiagnosticTemplateItemBase):
+    item_id: uuid.UUID
+    template_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+class DiagnosticTemplateBase(BaseModel):
+    name: str = Field(..., max_length=200)
+    is_active: bool = True
+
+class DiagnosticTemplateCreate(DiagnosticTemplateBase):
+    items: List[DiagnosticTemplateItemCreate] = []
+
+class DiagnosticTemplateResponse(DiagnosticTemplateBase):
+    template_id: uuid.UUID
+    items: List[DiagnosticTemplateItemResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DiagnosticFindingResponse(DiagnosticFindingBase):
+    finding_id: uuid.UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
 # DIAGNOSTIC
 class DiagnosticBase(BaseModel):
     visit_id: uuid.UUID
@@ -374,22 +464,7 @@ class DiagnosticUpdate(BaseModel):
 
 class DiagnosticResponse(DiagnosticBase):
     report_id: uuid.UUID
-    model_config = ConfigDict(from_attributes=True)
-
-
-# DIAGNOSTIC FINDING
-class DiagnosticFindingBase(BaseModel):
-    report_id: uuid.UUID
-    description: str = Field(..., max_length=1000)
-
-class DiagnosticFindingCreate(DiagnosticFindingBase):
-    pass
-
-class DiagnosticFindingUpdate(BaseModel):
-    description: Optional[str] = Field(None, max_length=1000)
-
-class DiagnosticFindingResponse(DiagnosticFindingBase):
-    finding_id: uuid.UUID
+    findings: List[DiagnosticFindingResponse] = []
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -618,6 +693,11 @@ class InvoiceResponse(InvoiceBase):
     total_balance: decimal.Decimal
     model_config = ConfigDict(from_attributes=True)
 
+class InvoiceDetailResponse(InvoiceResponse):
+    labor_entries: List[LaborEntryResponse] = []
+    part_instances: List[PartInstanceResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
 
 # DISPUTE
 class DisputeBase(BaseModel):
@@ -636,6 +716,8 @@ class DisputeUpdate(BaseModel):
     status: Optional[str] = None
     resolved_at: Optional[datetime.datetime] = None
     resolution: Optional[str] = Field(None, max_length=1000)
+    credit_amount: Optional[decimal.Decimal] = Field(None, ge=0)
+    credit_reason: Optional[str] = Field(None, max_length=500)
 
 class DisputeResponse(DisputeBase):
     dispute_id: uuid.UUID

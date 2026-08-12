@@ -39,11 +39,7 @@ def get_password_hash(password: str) -> str:
 
 # 3. GENERATE ACCESS JWT TOKEN
 def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
-    """
-    Generate a JWT access token containing the payload data.
     
-    Access tokens are short-lived tokens (e.g., 15 minutes) used to authenticate API requests.
-    """
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -61,12 +57,7 @@ def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None
 
 # 4. GENERATE REFRESH JWT TOKEN
 def create_refresh_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
-    """
-    Generate a refresh JWT token with a longer duration.
     
-    Refresh tokens are long-lived tokens (e.g., 7 days) stored securely. They are used
-    to request new access tokens without asking the user to log in again.
-    """
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta

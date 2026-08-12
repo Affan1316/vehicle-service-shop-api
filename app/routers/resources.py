@@ -8,7 +8,8 @@ from app.database import get_db
 from app.models.models import Technician, Bay
 from app.schemas import (
     TechnicianCreate, TechnicianResponse,
-    BayCreate, BayUpdate, BayResponse
+    BayCreate, BayUpdate, BayResponse,
+    CertificationCreate, CertificationResponse
 )
 from fastapi_pagination import LimitOffsetPage
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -36,6 +37,21 @@ async def create_technician(payload: TechnicianCreate, db: AsyncSession = Depend
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.post(
+    "/technicians/{tech_id}/certifications", 
+    response_model=CertificationResponse, 
+    status_code=status.HTTP_201_CREATED, 
+    dependencies=[Depends(RoleChecker(["manager"]))]
+)
+async def add_technician_certification(tech_id: uuid.UUID, payload: CertificationCreate, db: AsyncSession = Depends(get_db)):
+    """
+    Add a certification to an existing technician.
+    """
+    try:
+        return await ResourceService.add_technician_certification(db, tech_id, payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @router.get(
     "/technicians", 
     response_model=LimitOffsetPage[TechnicianResponse], 
@@ -45,7 +61,8 @@ async def list_technicians(params: PaginationParams = Depends(), db: AsyncSessio
     """
     List all technicians using offset-limit pagination.
     """
-    return await apaginate(db, select(Technician), params)
+    from sqlalchemy.orm import selectinload
+    return await apaginate(db, select(Technician).options(selectinload(Technician.certifications)), params)
 
 
 # --- BAY ENDPOINTS ---
@@ -72,8 +89,24 @@ async def create_bay(payload: BayCreate, db: AsyncSession = Depends(get_db)):
 )
 async def list_bays(params: PaginationParams = Depends(), db: AsyncSession = Depends(get_db)):
     """
-    List service bays using pagination.
+    List service bays using pagination. Auto-releases expired holds.
     """
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    
+    # Auto-release expired bay holds
+    expired_bays_res = await db.execute(
+        select(Bay).where(
+            (Bay.status == 'held') & 
+            (Bay.held_until < now)
+        )
+    )
+    for bay in expired_bays_res.scalars().all():
+        bay.status = 'available'
+        bay.held_until = None
+        
+    await db.flush()
+    
     return await apaginate(db, select(Bay), params)
 
 @router.put(

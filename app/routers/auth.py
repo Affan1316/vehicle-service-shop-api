@@ -12,7 +12,7 @@ from app.config import settings
 from app.routers.auth_deps import get_current_user
 from app.services import AuthService
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter()
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(f"{settings.RATE_LIMIT_AUTH}/minute")
@@ -23,6 +23,9 @@ async def register_user(request: Request, payload: UserCreate, db: AsyncSession 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+# Note: Using form data here (OAuth2 standard) instead of JSON. 
+# This is so FastAPI "/docs" login lock button works out-of-box. 
+# Do not change to JSON, otherwise testing in Swagger UI becomes pain.
 @router.post("/token", response_model=Token)
 @limiter.limit(f"{settings.RATE_LIMIT_AUTH}/minute")
 async def login_for_access_token(

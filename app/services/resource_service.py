@@ -1,8 +1,8 @@
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.models.models import Technician, Bay
-from app.schemas.schemas import TechnicianCreate, BayCreate, BayUpdate
+from app.models.models import Technician, Bay, Certification
+from app.schemas.schemas import TechnicianCreate, BayCreate, BayUpdate, CertificationCreate
 
 
 class ResourceService:
@@ -24,6 +24,22 @@ class ResourceService:
         db.add(tech)
         await db.flush()
         return tech
+
+    @staticmethod
+    async def add_technician_certification(db: AsyncSession, tech_id: uuid.UUID, payload: CertificationCreate) -> Certification:
+        # Check if tech exists
+        ex_res = await db.execute(select(Technician).where(Technician.tech_id == tech_id))
+        if not ex_res.scalar_one_or_none():
+            raise ValueError(f"Technician with ID {tech_id} not found.")
+
+        cert = Certification(
+            tech_id=tech_id,
+            cert_type=payload.cert_type,
+            expiry_date=payload.expiry_date
+        )
+        db.add(cert)
+        await db.flush()
+        return cert
 
     @staticmethod
     async def create_bay(db: AsyncSession, payload: BayCreate) -> Bay:

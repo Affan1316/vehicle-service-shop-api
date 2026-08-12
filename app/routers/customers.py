@@ -61,17 +61,46 @@ async def list_customers(params: PaginationParams = Depends(), db: AsyncSession 
 @router.get(
     "/customers/{customer_id}", 
     response_model=CustomerResponse, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))],
 )
-@_with_required_roles("manager", "advisor", "technician")
-async def get_customer(customer_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_customer(
+    customer_id: uuid.UUID, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
+):
     """
     Get details of a single customer by ID.
     """
+    if current_user.role == "customer" and current_user.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view other customer profiles.")
     try:
         return await CustomerService.get_customer(db, customer_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+from app.schemas.schemas import TimelineEventResponse
+@router.get(
+    "/customers/{customer_id}/timeline", 
+    response_model=List[TimelineEventResponse], 
+)
+async def get_customer_timeline(
+    customer_id: uuid.UUID, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
+):
+    """
+    Get the history timeline for a customer.
+    """
+    if current_user.role == "customer" and current_user.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view other customer's timeline.")
+    
+    # First ensure customer exists
+    try:
+        await CustomerService.get_customer(db, customer_id)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+        
+    events = await CustomerService.get_timeline_events(db, customer_id)
+    return events
 
 @router.put(
     "/customers/{customer_id}", 
@@ -151,14 +180,20 @@ async def list_vehicles(
 @router.get(
     "/vehicles/{vin}", 
     response_model=VehicleResponse, 
-    dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
 )
-async def get_vehicle(vin: str, db: AsyncSession = Depends(get_db)):
+async def get_vehicle(
+    vin: str, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
+):
     """
     Get vehicle details by VIN (Vehicle Identification Number).
     """
     try:
-        return await CustomerService.get_vehicle(db, vin)
+        vehicle = await CustomerService.get_vehicle(db, vin)
+        if current_user.role == "customer" and vehicle.customer_id != current_user.customer_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view other customers' vehicles.")
+        return vehicle
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
