@@ -1,28 +1,29 @@
 import uuid
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Response, BackgroundTasks, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.models import Customer, Vehicle, Quote, WorkOrder, Invoice, Deposit, Payment, User, Dispute, Warranty, WarrantyClaim
+from app.models.models import Customer, Quote, Invoice, Payment, User
 from app.schemas import (
     QuoteCreate, QuoteUpdate, QuoteResponse,
     InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceDetailResponse,
-    DepositCreate, DepositUpdate, DepositResponse,
-    PaymentCreate, PaymentResponse,
+    DepositCreate, DepositResponse,
+    PaymentCreate, PaymentResponse, RefundRequest, PaymentRefundResponse,
     DisputeCreate, DisputeUpdate, DisputeResponse,
-    WarrantyCreate, WarrantyUpdate, WarrantyResponse,
-    WarrantyClaimCreate, WarrantyClaimUpdate, WarrantyClaimResponse
+    WarrantyCreate, WarrantyResponse,
+    WarrantyClaimCreate, WarrantyClaimUpdate, WarrantyClaimResponse,
+    StripeCheckoutRequest, StripeCheckoutResponse, StripePaymentStatusResponse
 )
 from fastapi_pagination import LimitOffsetPage
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from app.routers.auth_deps import RoleChecker
 from app.routers.pagination_deps import PaginationParams
 
-from app.services import BillingService
-from app.exceptions import NotFoundError
+from app.services import BillingService, PDFService, EmailService, AuditService, StripeService
+from app.exceptions import NotFoundError, ValidationError, PaymentGatewayError
 
 router = APIRouter()
 
@@ -31,6 +32,7 @@ router = APIRouter()
 @router.post("/quotes", response_model=QuoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_quote(
     payload: QuoteCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor"]))
 ):
@@ -38,7 +40,24 @@ async def create_quote(
     Draft a new quote. Validates customer and vehicle existence.
     """
     try:
-        return await BillingService.create_quote(db, payload)
+        quote = await BillingService.create_quote(db, payload)
+        await AuditService.log_create(
+            db, "quote", str(quote.quote_id),
+            current_user.user_id, current_user.username,
+            {"total_amount": str(quote.total_amount), "status": quote.status}
+        )
+        # Send quote ready email if customer has email
+        cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
+        cust = cust_res.scalar_one_or_none()
+        if cust and cust.email:
+            background_tasks.add_task(
+                EmailService.send_quote_ready,
+                cust.email,
+                cust.name,
+                quote.quote_id,
+                float(quote.total_amount)
+            )
+        return quote
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -82,7 +101,7 @@ async def update_quote(
             )
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
-            
+
     elif current_user.role == "advisor":
         if payload.status == "approved":
             raise HTTPException(status_code=403, detail="Advisors cannot approve quotes on behalf of customers. Manager override or customer approval is required.")
@@ -90,11 +109,44 @@ async def update_quote(
             raise HTTPException(status_code=403, detail="Advisors cannot manually override the quote total amount. Manager approval required.")
 
     try:
-        return await BillingService.update_quote(db, quote_id, payload)
+        quote = await BillingService.update_quote(db, quote_id, payload)
+        await AuditService.log_update(
+            db, "quote", str(quote_id),
+            current_user.user_id, current_user.username,
+            payload.model_dump(exclude_unset=True)
+        )
+        return quote
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/quotes/{quote_id}/pdf")
+async def get_quote_pdf(
+    quote_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
+    """
+    Download a formatted PDF estimate/quote document.
+    """
+    if current_user.role == "customer":
+        try:
+            quote = await BillingService.get_quote(db, quote_id)
+            if quote.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Not authorized to view this quote.")
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    try:
+        pdf_bytes = await PDFService.generate_quote_pdf(db, quote_id)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=quote_{str(quote_id)[:8]}.pdf"}
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # --- INVOICE ENDPOINTS ---
@@ -122,7 +174,8 @@ async def list_invoices(
     """
     Retrieve all invoices with pagination.
     """
-    query = select(Invoice)
+    from sqlalchemy.orm import selectinload
+    query = select(Invoice).options(selectinload(Invoice.payments))
     if current_user.role == "customer":
         if current_user.customer_id is None:
             raise HTTPException(status_code=400, detail="User is not linked to a customer profile.")
@@ -178,13 +231,40 @@ async def update_invoice(
             raise HTTPException(status_code=403, detail="Advisors cannot manually override the total amount due. Manager approval required.")
         if payload.credit_amount is not None and payload.credit_amount > 50:
             raise HTTPException(status_code=403, detail="Advisors cannot apply credits greater than $50. Manager approval required.")
-            
+
     try:
         return await BillingService.update_invoice(db, invoice_id, payload)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+async def get_invoice_pdf(
+    invoice_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
+    """
+    Download a formatted PDF invoice with tax, payment history, and balance details.
+    """
+    if current_user.role == "customer":
+        try:
+            invoice = await BillingService.get_invoice(db, invoice_id)
+            if invoice.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Not authorized to view this invoice.")
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    try:
+        pdf_bytes = await PDFService.generate_invoice_pdf(db, invoice_id)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=invoice_{str(invoice_id)[:8]}.pdf"}
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # --- DEPOSIT ENDPOINTS ---
@@ -200,6 +280,24 @@ async def create_deposit(
     """
     try:
         return await BillingService.create_deposit(db, payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/deposits/{deposit_id}/refund", response_model=DepositResponse)
+async def refund_deposit(
+    deposit_id: uuid.UUID,
+    payload: RefundRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager"]))
+):
+    """
+    Manager endpoint: Issue a full or partial refund for a customer deposit.
+    """
+    try:
+        return await BillingService.refund_deposit(db, deposit_id, payload.amount, payload.reason)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -228,6 +326,126 @@ async def create_payment(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/payments/{payment_id}/refund", response_model=PaymentRefundResponse)
+async def refund_payment(
+    payment_id: uuid.UUID,
+    payload: RefundRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager"]))
+):
+    """
+    Manager endpoint: Issue a full or partial refund for an invoice payment.
+    """
+    try:
+        return await BillingService.refund_payment(db, payment_id, payload.amount, payload.reason)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except (ValueError, PaymentGatewayError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- STRIPE PAYMENT GATEWAY ENDPOINTS ---
+
+@router.post("/invoices/{invoice_id}/pay", response_model=StripeCheckoutResponse)
+async def create_stripe_checkout_session(
+    invoice_id: uuid.UUID,
+    payload: StripeCheckoutRequest = StripeCheckoutRequest(),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
+):
+    """
+    Create a Stripe Checkout session to collect online payment for an invoice.
+    Returns the session ID and hosted checkout URL.
+    """
+    if current_user.role == "customer":
+        try:
+            invoice = await BillingService.get_invoice(db, invoice_id)
+            if invoice.customer_id != current_user.customer_id:
+                raise HTTPException(status_code=403, detail="Not authorized to pay for this invoice.")
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    try:
+        session_data = await StripeService.create_checkout_session(
+            db=db,
+            invoice_id=invoice_id,
+            success_url=payload.success_url,
+            cancel_url=payload.cancel_url
+        )
+        return session_data
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PaymentGatewayError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Payment gateway error: {str(e)}")
+
+
+@router.post("/stripe/webhook", status_code=status.HTTP_200_OK)
+async def stripe_webhook(
+    request: Request,
+    stripe_signature: Optional[str] = Header(None, alias="Stripe-Signature"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Stripe Webhook handler to receive asynchronous payment lifecycle events.
+    Verifies cryptographic signature using STRIPE_WEBHOOK_SECRET.
+    """
+    if not stripe_signature:
+        raise HTTPException(status_code=400, detail="Missing Stripe-Signature header.")
+
+    payload = await request.body()
+    try:
+        event = StripeService.process_webhook_event(payload, stripe_signature)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PaymentGatewayError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    event_type = event.get("type")
+    data_object = event.get("data", {}).get("object", {})
+
+    if event_type == "checkout.session.completed":
+        await StripeService.handle_checkout_completed(db, data_object)
+
+    return {"status": "success", "event_type": event_type}
+
+
+@router.get("/payments/{payment_id}/stripe-status", response_model=StripePaymentStatusResponse)
+async def get_stripe_payment_status(
+    payment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RoleChecker(["manager", "advisor"]))
+):
+    """
+    Manager & Advisor endpoint: Query live Stripe status for a payment.
+    """
+    res = await db.execute(select(Payment).where(Payment.payment_id == payment_id))
+    payment = res.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail=f"Payment with ID {payment_id} not found.")
+
+    if not payment.stripe_payment_intent_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This payment was not processed via Stripe or lacks a Stripe Payment Intent ID."
+        )
+
+    try:
+        status_info = StripeService.get_payment_status(payment.stripe_payment_intent_id)
+        return {
+            "payment_id": payment.payment_id,
+            "stripe_status": status_info["stripe_status"],
+            "stripe_payment_intent_id": status_info["stripe_payment_intent_id"],
+            "amount": status_info["amount"],
+            "currency": status_info["currency"]
+        }
+    except PaymentGatewayError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 # --- DISPUTE ENDPOINTS ---
 
 @router.post(
@@ -236,8 +454,8 @@ async def create_payment(
     status_code=status.HTTP_201_CREATED
 )
 async def create_dispute(
-    invoice_id: uuid.UUID, 
-    payload: DisputeCreate, 
+    invoice_id: uuid.UUID,
+    payload: DisputeCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
 ):
@@ -263,7 +481,7 @@ async def create_dispute(
     response_model=List[DisputeResponse]
 )
 async def list_invoice_disputes(
-    invoice_id: uuid.UUID, 
+    invoice_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
 ):

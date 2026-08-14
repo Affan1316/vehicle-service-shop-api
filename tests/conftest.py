@@ -102,7 +102,7 @@ async def cleanup_db():
         async with AsyncSession(engine) as session:
             await session.execute(text("DELETE FROM user_account WHERE username LIKE 'test_%'"))
             await session.commit()
-    
+
     await _clean()
     yield
     await _clean()

@@ -26,7 +26,7 @@ async def test_register_user_duplicate(client: httpx.AsyncClient):
     # Register once
     resp1 = await client.post("/auth/register", json=payload)
     assert resp1.status_code == 201
-    
+
     # Register twice
     resp2 = await client.post("/auth/register", json=payload)
     assert resp2.status_code == 400

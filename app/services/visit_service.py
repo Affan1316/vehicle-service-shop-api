@@ -12,7 +12,7 @@ class VisitService:
         cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
         if not cust_res.scalar_one_or_none():
             raise ValueError("Customer does not exist.")
-        
+
         veh_res = await db.execute(select(Vehicle).where(Vehicle.vin == payload.vehicle_id))
         veh = veh_res.scalar_one_or_none()
         if not veh:
@@ -65,7 +65,7 @@ class VisitService:
             appt.bay_id = payload.bay_id
         if payload.preferred_time is not None:
             appt.preferred_time = payload.preferred_time
-            
+
         if appt.status == 'confirmed' and appt.bay_id is not None:
             from app.models.models import Bay
             bay_res = await db.execute(select(Bay).where(Bay.bay_id == appt.bay_id))
@@ -88,7 +88,7 @@ class VisitService:
         cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
         if not cust_res.scalar_one_or_none():
             raise ValueError("Customer does not exist.")
-        
+
         veh_res = await db.execute(select(Vehicle).where(Vehicle.vin == payload.vehicle_id))
         veh = veh_res.scalar_one_or_none()
         if not veh:
@@ -117,11 +117,11 @@ class VisitService:
             if not appt:
                 raise ValueError("Appointment does not exist.")
             appt.status = 'checked_in'
-                
+
         # Check for existing active visit
         active_visit_res = await db.execute(
             select(Visit).where(
-                (Visit.vehicle_id == payload.vehicle_id) & 
+                (Visit.vehicle_id == payload.vehicle_id) &
                 (Visit.status != 'completed')
             )
         )
@@ -192,20 +192,20 @@ class VisitService:
             from app.models.models import WorkOrder, Invoice
             wo_res = await db.execute(select(WorkOrder.work_order_id).where(WorkOrder.visit_id == visit_id))
             wo_ids = [row[0] for row in wo_res.all()]
-            
+
             if wo_ids:
                 inv_res = await db.execute(select(Invoice).where(Invoice.work_order_id.in_(wo_ids)))
                 invoices = inv_res.scalars().all()
                 for inv in invoices:
                     if inv.status != 'paid':
                         raise ValueError(f"Cannot check out vehicle: Invoice {inv.invoice_id} is not fully paid.")
-                        
+
             from app.models.models import Quote
             quote_res = await db.execute(select(Quote).where(Quote.visit_id == visit_id, Quote.status.in_(['draft', 'issued'])))
             quotes = quote_res.scalars().all()
             for q in quotes:
                 q.status = 'expired'
-                
+
             visit.checked_out_at = payload.checked_out_at
 
         await db.flush()

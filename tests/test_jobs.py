@@ -1,6 +1,5 @@
 import pytest
 import httpx
-import uuid
 import datetime
 import random
 import string

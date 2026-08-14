@@ -5,19 +5,22 @@ from sqlalchemy import select
 from app.models.models import Part, Vendor, PurchaseOrder, PoLineItem, PartInstance
 from app.schemas.schemas import (
     PartCreate, PartUpdate,
-    VendorCreate, VendorUpdate,
-    PurchaseOrderCreate, PurchaseOrderUpdate,
-    PartInstanceUpdate
+    VendorCreate, PurchaseOrderCreate, PartInstanceUpdate
 )
 
 class InventoryService:
     @staticmethod
     async def create_part(db: AsyncSession, payload: PartCreate) -> Part:
         part = Part(
+            name=payload.name,
             part_number=payload.part_number,
+            description=payload.description,
             category=payload.category,
+            cost_price=payload.cost_price,
+            retail_price=payload.retail_price,
             quantity_on_hand=payload.quantity_on_hand,
-            is_returnable=payload.is_returnable
+            is_returnable=payload.is_returnable,
+            warranty_required=payload.warranty_required
         )
         db.add(part)
         await db.flush()
@@ -29,6 +32,30 @@ class InventoryService:
         part = res.scalar_one_or_none()
         if not part:
             raise ValueError(f"Part with ID {part_id} not found.")
+        return part
+
+    @staticmethod
+    async def update_part(db: AsyncSession, part_id: uuid.UUID, payload: PartUpdate) -> Part:
+        part = await InventoryService.get_part(db, part_id)
+        if payload.name is not None:
+            part.name = payload.name
+        if payload.part_number is not None:
+            part.part_number = payload.part_number
+        if payload.description is not None:
+            part.description = payload.description
+        if payload.category is not None:
+            part.category = payload.category
+        if payload.cost_price is not None:
+            part.cost_price = payload.cost_price
+        if payload.retail_price is not None:
+            part.retail_price = payload.retail_price
+        if payload.quantity_on_hand is not None:
+            part.quantity_on_hand = payload.quantity_on_hand
+        if payload.is_returnable is not None:
+            part.is_returnable = payload.is_returnable
+        if payload.warranty_required is not None:
+            part.warranty_required = payload.warranty_required
+        await db.flush()
         return part
 
     @staticmethod
@@ -102,7 +129,7 @@ class InventoryService:
                 if old_status == "received":
                     part.quantity_on_hand = max(0, part.quantity_on_hand - 1)
                 instance.installed_at = datetime.datetime.now(datetime.timezone.utc)
-                
+
             # If rejected or returned, reverse the received increment
             if new_status in ("rejected", "returned") and old_status == "received":
                 part_res = await db.execute(select(Part).where(Part.part_id == instance.part_id))

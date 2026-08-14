@@ -7,17 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.models import Diagnostic, DiagnosticFinding, Visit, DiagnosticTemplate, LineItem, WorkOrder, User
+from app.models.models import Diagnostic, DiagnosticFinding, Visit, DiagnosticTemplate, User
 from app.schemas.schemas import (
     DiagnosticCreate, DiagnosticResponse,
     DiagnosticFindingCreate, DiagnosticFindingResponse,
     DiagnosticFindingUpdate,
     QuoteCreate, WorkOrderCreate, LineItemCreate
 )
-from fastapi_pagination import LimitOffsetPage
-from fastapi_pagination.ext.sqlalchemy import apaginate
 from app.routers.auth_deps import RoleChecker
-from app.routers.pagination_deps import PaginationParams
 
 router = APIRouter()
 
@@ -27,7 +24,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
 )
 async def create_diagnostic(
-    payload: DiagnosticCreate, 
+    payload: DiagnosticCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["technician", "manager", "advisor"]))
 ):
@@ -39,10 +36,10 @@ async def create_diagnostic(
     visit = visit_res.scalar_one_or_none()
     if not visit:
         raise HTTPException(status_code=404, detail="Associated customer visit not found.")
-        
+
     if visit.status not in ["checked_in", "in_diagnosis"]:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Cannot create diagnostic: Visit is currently '{visit.status}', which is invalid for new diagnostics."
         )
 
@@ -69,7 +66,7 @@ async def create_diagnostic(
         template_res = await db.execute(
             select(DiagnosticTemplate)
             .options(selectinload(DiagnosticTemplate.items))
-            .where(DiagnosticTemplate.is_active == True)
+            .where(DiagnosticTemplate.is_active.is_(True))
             .limit(1)
         )
         template = template_res.scalar_one_or_none()
@@ -81,10 +78,10 @@ async def create_diagnostic(
                     is_critical=False
                 )
                 db.add(finding)
-        
+
         # Update visit status to 'in_diagnosis'
         visit.status = 'in_diagnosis'
-        
+
         await db.commit()
 
         # Fetch the complete diagnostic to ensure relationships (like findings) are loaded for serialization
@@ -174,7 +171,7 @@ async def update_diagnostic_finding(
         finding.recommended_service = payload.recommended_service
     if payload.is_critical is not None:
         finding.is_critical = payload.is_critical
-        
+
     await db.flush()
     return finding
 
@@ -197,10 +194,10 @@ async def complete_diagnostic(report_id: uuid.UUID, db: AsyncSession = Depends(g
         raise HTTPException(status_code=400, detail="Diagnostic report is already completed.")
 
     report.status = "completed"
-    
+
     visit_res = await db.execute(select(Visit).where(Visit.visit_id == report.visit_id))
     visit = visit_res.scalar_one_or_none()
-    
+
     # Only transition Visit and generate drafts if visit is still in checked_in or in_diagnosis
     if visit and visit.status in ["checked_in", "in_diagnosis"]:
         visit.status = 'awaiting_quote'

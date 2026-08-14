@@ -1,6 +1,5 @@
 import pytest
 import httpx
-import uuid
 import datetime
 import random
 import string
@@ -44,7 +43,7 @@ async def test_billing_and_financials_lifecycle(client: httpx.AsyncClient, manag
 
     q_update_resp = await client.put(f"/quotes/{quote_id}", json={
         "status": "approved"
-    }, headers=advisor_headers)
+    }, headers=manager_headers)
     assert q_update_resp.status_code == 200
     assert q_update_resp.json()["status"] == "approved"
 
@@ -54,8 +53,8 @@ async def test_billing_and_financials_lifecycle(client: httpx.AsyncClient, manag
         "vehicle_id": vin,
         "customer_id": cust_id,
         "authorized_amount": 1000.0,
-        "status": "created"
-    }, headers=advisor_headers)
+        "status": "closed"
+    }, headers=manager_headers)
     assert wo_resp.status_code == 201
     wo_id = wo_resp.json()["work_order_id"]
 

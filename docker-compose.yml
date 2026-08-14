@@ -23,17 +23,34 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
     environment:
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-changeme}@db:5432/vehicle_service_shop"
-      SECRET_KEY: "${SECRET_KEY}"
+      SECRET_KEY: "${SECRET_KEY:-default_insecure_development_secret_key_change_me_in_prod}"
       ENVIRONMENT: "${ENVIRONMENT:-production}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       DEBUG: "false"
+      # Shop Identity
+      SHOP_NAME: "${SHOP_NAME:-Auto Service Shop}"
+      SHOP_ADDRESS: "${SHOP_ADDRESS:-123 Main Street, City, ST 12345}"
+      SHOP_PHONE: "${SHOP_PHONE:-(555) 555-0100}"
+      # Tax
+      TAX_RATE: "${TAX_RATE:-0.07}"
+      TAX_LABEL: "${TAX_LABEL:-Sales Tax}"
+      # Email
+      EMAIL_ENABLED: "${EMAIL_ENABLED:-false}"
+      SMTP_HOST: "${SMTP_HOST:-localhost}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      # File Uploads
+      UPLOAD_DIR: "uploads"
+      # Default Seed Admin
+      SEED_ADMIN_USERNAME: "${SEED_ADMIN_USERNAME:-admin}"
+      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-ChangeMe123!}"
     depends_on:
       db:
         condition: service_healthy
-    # Run migrations then start the server
     command: >
       sh -c "
         python -m alembic upgrade head &&
@@ -62,3 +79,4 @@ services:
 volumes:
   pgdata:
   promdata:
+  uploads_data:

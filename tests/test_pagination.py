@@ -10,7 +10,7 @@ async def test_paginated_envelope_structure(client: httpx.AsyncClient):
         "password": "pagpassword",
         "role": "manager"
     })
-    
+
     # 2. Get login token
     login_resp = await client.post("/auth/token", data={
         "username": "test_pag_user",
@@ -18,7 +18,7 @@ async def test_paginated_envelope_structure(client: httpx.AsyncClient):
     })
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
+
     # 3. Call paginated endpoint
     resp = await client.get("/bays?limit=2&offset=1", headers=headers)
     assert resp.status_code == 200
@@ -40,7 +40,7 @@ async def test_pagination_boundaries(client: httpx.AsyncClient):
         "password": "pagpassword",
         "role": "manager"
     })
-    
+
     # 2. Get login token
     login_resp = await client.post("/auth/token", data={
         "username": "test_pag_user2",
@@ -48,11 +48,10 @@ async def test_pagination_boundaries(client: httpx.AsyncClient):
     })
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
+
     # 2. Call paginated endpoint with valid limit
     resp = await client.get("/bays?limit=5", headers=headers)
     assert resp.status_code == 200
-    data = resp.json()
     # Expecting Pydantic validator to raise error or limit to be capped at 100 via ge=1, le=100
     # Wait, our Query setting was ge=1, le=100.
     # So a limit of 500 should return a 422 validation error!
@@ -61,6 +60,6 @@ async def test_pagination_boundaries(client: httpx.AsyncClient):
     # And call with limit=0 (which is ge=1) and verify it returns 422.
     resp_large = await client.get("/bays?limit=500", headers=headers)
     assert resp_large.status_code == 422
-    
+
     resp_small = await client.get("/bays?limit=0", headers=headers)
     assert resp_small.status_code == 422

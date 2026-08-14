@@ -21,7 +21,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 # This async dependency extracts the token, decodes it, verifies the signature and expiration,
 # queries the database to verify the user exists, and returns the User object.
 async def get_current_user(
-    token: str = Depends(oauth2_scheme), 
+    token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
@@ -40,11 +40,11 @@ async def get_current_user(
         username: str = payload.get("sub")
         role: str = payload.get("role")
         token_type: str = payload.get("type")
-        
+
         # Verify mandatory claims and ensure this is an 'access' token (not a 'refresh' token)
         if username is None or role is None or token_type != "access":
             raise credentials_exception
-            
+
         token_data = TokenData(username=username, role=role)
     except JWTError:
         raise credentials_exception
@@ -54,13 +54,13 @@ async def get_current_user(
     user = res.scalar_one_or_none()
     if user is None:
         raise credentials_exception
-    
+
     if not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
         )
-        
+
     return user
 
 # 3. ROLE-BASED ACCESS CONTROL (RBAC) DEPENDENCY CLASS

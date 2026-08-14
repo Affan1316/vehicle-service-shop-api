@@ -11,3 +11,8 @@ class NotFoundError(ServiceError):
 class ValidationError(ServiceError):
     """Exception raised when input data fails service-level business rules."""
     pass
+
+
+class PaymentGatewayError(ServiceError):
+    """Exception raised when payment processor integration fails or is unconfigured."""
+    pass

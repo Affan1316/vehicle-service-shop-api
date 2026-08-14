@@ -31,20 +31,21 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff pytest pytest-asyncio httpx
-        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
 
     - name: Lint check with Ruff
-      run: ruff check app/ --exit-zero
+      run: ruff check app/
 
     - name: Run migrations
       env:
         DATABASE_URL: "postgresql+asyncpg://postgres:postgrespassword@localhost:5432/vehicle_service_shop_test"
         SECRET_KEY: "testsecretkeyfortestingpurposesonlyandnothingelse"
+        ENVIRONMENT: "testing"
       run: |
         python -m alembic upgrade head
 
@@ -53,8 +54,10 @@ jobs:
         DATABASE_URL: "postgresql+asyncpg://postgres:postgrespassword@localhost:5432/vehicle_service_shop_test"
         ENVIRONMENT: "testing"
         SECRET_KEY: "testsecretkeyfortestingpurposesonlyandnothingelse"
+        EMAIL_ENABLED: "false"
+        UPLOAD_DIR: "/tmp/uploads"
       run: |
-        python -m pytest tests/
+        python -m pytest tests/ --tb=short -q
 
   docker-build:
     needs: lint-and-test

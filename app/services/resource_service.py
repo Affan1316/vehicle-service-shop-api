@@ -19,11 +19,16 @@ class ResourceService:
         }
         if payload.tech_id is not None:
             kwargs["tech_id"] = payload.tech_id
-            
+
         tech = Technician(**kwargs)
         db.add(tech)
         await db.flush()
-        return tech
+
+        from sqlalchemy.orm import selectinload
+        res = await db.execute(
+            select(Technician).options(selectinload(Technician.certifications)).where(Technician.tech_id == tech.tech_id)
+        )
+        return res.scalar_one()
 
     @staticmethod
     async def add_technician_certification(db: AsyncSession, tech_id: uuid.UUID, payload: CertificationCreate) -> Certification:

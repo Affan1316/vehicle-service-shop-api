@@ -1,0 +1,15 @@
+target-version = "py312"
+line-length = 120
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (syntax errors, undefined variables, unused imports)
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # Line length handled separately
+    "B008",  # Allow FastAPI Depends(...) in parameter defaults
+    "B904",  # Allow plain raise in except blocks
+]

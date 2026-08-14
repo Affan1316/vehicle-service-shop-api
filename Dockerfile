@@ -4,6 +4,9 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 # Install system dependencies for psycopg2 and bcrypt compilation
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -18,7 +21,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install only runtime system deps (libpq for asyncpg)
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/usr/local/bin:$PATH"
+
+# Install only runtime system deps (libpq for asyncpg, curl for health check)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
@@ -27,14 +34,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
+# Create non-root user and persistent upload directory
+RUN adduser --disabled-password --gecos "" --no-create-home appuser \
+    && mkdir -p /app/uploads \
+    && chown -R appuser:appuser /app
+
 # Copy application source
 COPY alembic.ini .
 COPY migrations/ migrations/
 COPY app/ app/
 COPY seed_db.py .
 
-# Create non-root user for security
-RUN adduser --disabled-password --gecos "" --no-create-home appuser
 USER appuser
 
 # Expose the application port

@@ -1,11 +1,10 @@
 import uuid
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from app.database import get_db
-from app.models.models import Customer, Vehicle, Appointment, Visit, User
+from app.models.models import Customer, Appointment, Visit, User
 from app.schemas import (
     AppointmentCreate, AppointmentUpdate, AppointmentResponse,
     VisitCreate, VisitUpdate, VisitResponse
@@ -15,7 +14,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from app.routers.auth_deps import RoleChecker
 from app.routers.pagination_deps import PaginationParams
 
-from app.services import VisitService
+from app.services import VisitService, EmailService, AuditService
 from app.exceptions import NotFoundError
 
 router = APIRouter()
@@ -23,12 +22,13 @@ router = APIRouter()
 # --- APPOINTMENT ENDPOINTS ---
 
 @router.post(
-    "/appointments", 
-    response_model=AppointmentResponse, 
+    "/appointments",
+    response_model=AppointmentResponse,
     status_code=status.HTTP_201_CREATED
 )
 async def create_appointment(
-    payload: AppointmentCreate, 
+    payload: AppointmentCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
 ):
@@ -39,16 +39,33 @@ async def create_appointment(
         if current_user.customer_id != payload.customer_id:
             raise HTTPException(status_code=403, detail="Not authorized to book appointments for other customers.")
     try:
-        return await VisitService.create_appointment(db, payload)
+        appt = await VisitService.create_appointment(db, payload)
+        await AuditService.log_create(
+            db, "appointment", str(appt.appointment_id),
+            current_user.user_id, current_user.username,
+            {"vehicle_id": appt.vehicle_id, "requested_date": str(appt.requested_date)}
+        )
+        # Send confirmation email if customer has email configured
+        cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
+        cust = cust_res.scalar_one_or_none()
+        if cust and cust.email:
+            background_tasks.add_task(
+                EmailService.send_appointment_reminder,
+                cust.email,
+                cust.name,
+                str(appt.requested_date),
+                appt.vehicle_id
+            )
+        return appt
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get(
-    "/appointments", 
+    "/appointments",
     response_model=LimitOffsetPage[AppointmentResponse]
 )
 async def list_appointments(
-    params: PaginationParams = Depends(), 
+    params: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
 ):
@@ -63,7 +80,7 @@ async def list_appointments(
     return await apaginate(db, query, params)
 
 @router.put(
-    "/appointments/{appointment_id}", 
+    "/appointments/{appointment_id}",
     response_model=AppointmentResponse,
 )
 async def update_appointment(
@@ -98,9 +115,9 @@ async def update_appointment(
 # --- VISIT ENDPOINTS ---
 
 @router.post(
-    "/visits", 
-    response_model=VisitResponse, 
-    status_code=status.HTTP_201_CREATED, 
+    "/visits",
+    response_model=VisitResponse,
+    status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
 )
 async def create_visit(payload: VisitCreate, db: AsyncSession = Depends(get_db)):
@@ -113,7 +130,7 @@ async def create_visit(payload: VisitCreate, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get(
-    "/visits", 
+    "/visits",
     response_model=LimitOffsetPage[VisitResponse]
 )
 async def list_visits(
@@ -132,8 +149,8 @@ async def list_visits(
     return await apaginate(db, query, params)
 
 @router.put(
-    "/visits/{visit_id}", 
-    response_model=VisitResponse, 
+    "/visits/{visit_id}",
+    response_model=VisitResponse,
     dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
 )
 async def update_visit(visit_id: uuid.UUID, payload: VisitUpdate, db: AsyncSession = Depends(get_db)):

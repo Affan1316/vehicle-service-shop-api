@@ -16,7 +16,7 @@ async def test_unauthorized_role_request(client: httpx.AsyncClient):
         "password": "custpassword",
         "role": "customer"
     })
-    
+
     # 2. Get login token
     login_resp = await client.post("/auth/token", data={
         "username": "test_cust_rbac",
@@ -24,7 +24,7 @@ async def test_unauthorized_role_request(client: httpx.AsyncClient):
     })
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
+
     # 3. Customer tries to create a technician (should get 403)
     resp = await client.post("/technicians", json={
         "name": "Should Fail Tech",
@@ -41,7 +41,7 @@ async def test_authorized_role_request(client: httpx.AsyncClient):
         "password": "mgrpassword",
         "role": "manager"
     })
-    
+
     # 2. Get login token
     login_resp = await client.post("/auth/token", data={
         "username": "test_mgr_rbac",
@@ -49,7 +49,7 @@ async def test_authorized_role_request(client: httpx.AsyncClient):
     })
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
+
     # 3. Manager creates technician (should succeed)
     resp = await client.post("/technicians", json={
         "name": "Succeeding Tech",

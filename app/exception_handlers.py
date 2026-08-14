@@ -16,9 +16,9 @@ logger = logging.getLogger("auto_shop.exceptions")
 def _extract_integrity_detail(exc: IntegrityError) -> dict:
     """
     Parse a SQLAlchemy IntegrityError into a user-friendly message.
-    
-    SQLAlchemy's IntegrityError contains database constraint details. 
-    We inspect the underlying PostgreSQL driver message (`exc.orig`) 
+
+    SQLAlchemy's IntegrityError contains database constraint details.
+    We inspect the underlying PostgreSQL driver message (`exc.orig`)
     and format it nicely for our API clients.
     """
     orig = str(exc.orig) if exc.orig else str(exc)

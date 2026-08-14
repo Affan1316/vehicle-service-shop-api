@@ -1,7 +1,8 @@
 import uuid
+import datetime
+import decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import datetime
 from app.models.models import Customer, Vehicle, Quote, WorkOrder, Invoice, Deposit, Payment, Dispute, Warranty, WarrantyClaim
 from app.schemas.schemas import (
     QuoteCreate, QuoteUpdate,
@@ -9,8 +10,7 @@ from app.schemas.schemas import (
     DepositCreate,
     PaymentCreate,
     DisputeCreate, DisputeUpdate,
-    WarrantyCreate, WarrantyUpdate,
-    WarrantyClaimCreate, WarrantyClaimUpdate
+    WarrantyCreate, WarrantyClaimCreate, WarrantyClaimUpdate
 )
 from app.exceptions import NotFoundError
 
@@ -21,14 +21,14 @@ class BillingService:
         cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
         if not cust_res.scalar_one_or_none():
             raise ValueError("Customer does not exist.")
-        
+
         veh_res = await db.execute(select(Vehicle).where(Vehicle.vin == payload.vehicle_id))
         veh = veh_res.scalar_one_or_none()
         if not veh:
             raise ValueError("Vehicle does not exist.")
         if veh.customer_id != payload.customer_id:
             raise ValueError("Vehicle does not belong to the specified customer.")
-            
+
         if payload.visit_id is not None:
             from app.models.models import Diagnostic
             diag_res = await db.execute(select(Diagnostic).where(Diagnostic.visit_id == payload.visit_id))
@@ -64,7 +64,7 @@ class BillingService:
     @staticmethod
     async def update_quote(db: AsyncSession, quote_id: uuid.UUID, payload: QuoteUpdate) -> Quote:
         q = await BillingService.get_quote(db, quote_id)
-        
+
         if payload.status is not None:
             if payload.status == 'issued':
                 from app.models.models import WorkOrder
@@ -80,9 +80,9 @@ class BillingService:
                 wo_res = await db.execute(select(WorkOrder).where(WorkOrder.quote_id == quote_id))
                 wo = wo_res.scalar_one_or_none()
                 if wo and wo.status == 'created':
-                    wo.status = 'in_progress'
+                    wo.status = 'active'
                     wo.authorized_amount = q.total_amount
-                
+
                 if q.visit_id:
                     visit_res = await db.execute(select(Visit).where(Visit.visit_id == q.visit_id))
                     visit = visit_res.scalar_one_or_none()
@@ -90,7 +90,7 @@ class BillingService:
                         visit.status = 'in_service'
 
             q.status = payload.status
-        
+
         if payload.total_amount is not None:
             if q.status in ['issued', 'approved'] and payload.total_amount != q.total_amount:
                 raise ValueError(f"Cannot modify total amount of a quote that is '{q.status}'.")
@@ -101,21 +101,22 @@ class BillingService:
             q.issued_at = payload.issued_at
         if payload.decline_reason is not None:
             q.decline_reason = payload.decline_reason
-            
+
         await db.flush()
         return q
 
     @staticmethod
     async def create_invoice(db: AsyncSession, payload: InvoiceCreate) -> Invoice:
         cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
-        if not cust_res.scalar_one_or_none():
+        cust = cust_res.scalar_one_or_none()
+        if not cust:
             raise ValueError("Customer does not exist.")
-        
+
         wo_res = await db.execute(select(WorkOrder).where(WorkOrder.work_order_id == payload.work_order_id))
         wo = wo_res.scalar_one_or_none()
         if not wo:
             raise ValueError("WorkOrder does not exist.")
-            
+
         if wo.status != 'closed':
             raise ValueError("Cannot create an invoice for a work order that is not closed.")
 
@@ -123,11 +124,20 @@ class BillingService:
         if existing_inv.scalar_one_or_none():
             raise ValueError("An invoice already exists for this work order.")
 
+        tax_rate = decimal.Decimal('0.00')
+        tax_amount = decimal.Decimal('0.00')
+        if not cust.tax_exempt:
+            from app.config import settings
+            tax_rate = decimal.Decimal(str(settings.TAX_RATE))
+            tax_amount = (payload.amount_due * tax_rate).quantize(decimal.Decimal('0.01'))
+
         invoice = Invoice(
             work_order_id=payload.work_order_id,
             customer_id=payload.customer_id,
             status=payload.status,
             amount_due=payload.amount_due,
+            tax_rate=tax_rate,
+            tax_amount=tax_amount,
             issued_at=payload.issued_at
         )
         db.add(invoice)
@@ -137,12 +147,12 @@ class BillingService:
         dep_res = await db.execute(
             select(Deposit)
             .where(
-                (Deposit.status == 'collected') & 
+                (Deposit.status == 'collected') &
                 ((Deposit.work_order_id == wo.work_order_id) | (Deposit.quote_id == wo.quote_id))
             )
         )
         deposits = dep_res.scalars().all()
-        
+
         for deposit in deposits:
             payment = Payment(
                 invoice_id=invoice.invoice_id,
@@ -153,13 +163,14 @@ class BillingService:
             db.add(payment)
             deposit.status = 'applied'
             deposit.invoice_id = invoice.invoice_id
-            
+
         await db.flush()
-        
+
         # Check if invoice is fully paid by deposits
         paid_amount = sum(d.amount for d in deposits)
         credit = invoice.credit_amount or 0
-        if invoice.amount_due - credit - paid_amount <= 0:
+        total_with_tax = invoice.amount_due + (invoice.tax_amount or decimal.Decimal('0.00'))
+        if total_with_tax - credit - paid_amount <= 0:
             invoice.status = 'paid'
             await db.flush()
 
@@ -167,7 +178,12 @@ class BillingService:
 
     @staticmethod
     async def get_invoice(db: AsyncSession, invoice_id: uuid.UUID) -> Invoice:
-        result = await db.execute(select(Invoice).where(Invoice.invoice_id == invoice_id))
+        from sqlalchemy.orm import selectinload
+        result = await db.execute(
+            select(Invoice)
+            .options(selectinload(Invoice.payments))
+            .where(Invoice.invoice_id == invoice_id)
+        )
         invoice = result.scalar_one_or_none()
         if not invoice:
             raise NotFoundError("Invoice not found")
@@ -176,22 +192,22 @@ class BillingService:
     @staticmethod
     async def get_invoice_details(db: AsyncSession, invoice_id: uuid.UUID):
         invoice = await BillingService.get_invoice(db, invoice_id)
-        
+
         from app.models.models import LineItem, LaborEntry, PartInstance
-        
+
         li_res = await db.execute(select(LineItem.line_item_id).where(LineItem.work_order_id == invoice.work_order_id))
         li_ids = [row[0] for row in li_res.all()]
-        
+
         if not li_ids:
             labor_entries = []
             part_instances = []
         else:
             labor_res = await db.execute(select(LaborEntry).where(LaborEntry.line_item_id.in_(li_ids)))
             labor_entries = labor_res.scalars().all()
-            
+
             part_res = await db.execute(select(PartInstance).where(PartInstance.line_item_id.in_(li_ids)))
             part_instances = part_res.scalars().all()
-            
+
         class InvoiceDetail:
             def __init__(self, inv, labors, parts):
                 for k in inv.__mapper__.columns.keys():
@@ -199,7 +215,7 @@ class BillingService:
                 self.total_balance = inv.total_balance
                 self.labor_entries = labors
                 self.part_instances = parts
-                
+
         return InvoiceDetail(invoice, labor_entries, part_instances)
 
     @staticmethod
@@ -219,21 +235,34 @@ class BillingService:
             invoice.status = payload.status
         if payload.amount_due is not None:
             invoice.amount_due = payload.amount_due
+            # Recalculate tax if customer is not tax exempt
+            cust_res = await db.execute(select(Customer).where(Customer.customer_id == invoice.customer_id))
+            cust = cust_res.scalar_one_or_none()
+            if cust and not cust.tax_exempt:
+                from app.config import settings
+                tax_rate = invoice.tax_rate or decimal.Decimal(str(settings.TAX_RATE))
+                invoice.tax_rate = tax_rate
+                invoice.tax_amount = (invoice.amount_due * tax_rate).quantize(decimal.Decimal('0.01'))
+            else:
+                invoice.tax_rate = decimal.Decimal('0.00')
+                invoice.tax_amount = decimal.Decimal('0.00')
         if payload.warranty_id is not None:
             invoice.warranty_id = payload.warranty_id
         if payload.credit_amount is not None:
             invoice.credit_amount = payload.credit_amount
         if payload.credit_reason is not None:
             invoice.credit_reason = payload.credit_reason
-            
+
         if invoice.status != 'paid':
             paid_amount = sum(p.amount for p in invoice.payments)
             credit = invoice.credit_amount or 0
-            if invoice.amount_due - credit < paid_amount:
-                raise ValueError("New amount due (minus credits) cannot be less than the already paid amount.")
-            if invoice.amount_due - credit == paid_amount:
+            tax = invoice.tax_amount or decimal.Decimal('0.00')
+            total_with_tax = invoice.amount_due + tax
+            if total_with_tax - credit < paid_amount:
+                raise ValueError("New amount due plus tax (minus credits) cannot be less than the already paid amount.")
+            if total_with_tax - credit == paid_amount:
                 invoice.status = 'paid'
-                
+
         await db.flush()
         return invoice
 
@@ -242,7 +271,7 @@ class BillingService:
         cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
         if not cust_res.scalar_one_or_none():
             raise ValueError("Customer does not exist.")
-        
+
         q_res = await db.execute(select(Quote).where(Quote.quote_id == payload.quote_id))
         if not q_res.scalar_one_or_none():
             raise ValueError("Quote does not exist.")
@@ -263,7 +292,7 @@ class BillingService:
         )
         if wo_obj:
             deposit.work_order = wo_obj
-        
+
         db.add(deposit)
         await db.flush()
         return deposit
@@ -275,11 +304,12 @@ class BillingService:
         invoice = inv_res.scalar_one_or_none()
         if not invoice:
             raise ValueError("Invoice does not exist.")
-            
+
         current_paid_amount = sum(p.amount for p in invoice.payments)
         credit = invoice.credit_amount or 0
-        balance_due = invoice.amount_due - credit - current_paid_amount
-        
+        tax = invoice.tax_amount or decimal.Decimal('0.00')
+        balance_due = invoice.amount_due + tax - credit - current_paid_amount
+
         if payload.amount > balance_due:
             raise ValueError(f"Payment amount ({payload.amount}) exceeds the remaining balance due ({balance_due}).")
 
@@ -288,18 +318,23 @@ class BillingService:
             amount=payload.amount,
             method=payload.method,
             collected_at=payload.collected_at,
-            payer_id=payload.payer_id
+            payer_id=payload.payer_id,
+            stripe_payment_intent_id=payload.stripe_payment_intent_id,
+            stripe_checkout_session_id=payload.stripe_checkout_session_id,
+            stripe_charge_id=payload.stripe_charge_id,
+            stripe_refund_id=payload.stripe_refund_id
         )
         db.add(payment)
         await db.flush()
-        
+
         # Check if the invoice is now paid
         paid_amount = sum(p.amount for p in invoice.payments) + payment.amount
         credit = invoice.credit_amount or 0
-        if invoice.amount_due - credit - paid_amount <= 0:
+        total_with_tax = invoice.amount_due + tax
+        if total_with_tax - credit - paid_amount <= 0:
             invoice.status = 'paid'
             await db.flush()
-            
+
         return payment
 
     # --- DISPUTE SERVICE METHODS ---
@@ -352,15 +387,17 @@ class BillingService:
                 from sqlalchemy.orm import selectinload
                 inv_res = await db.execute(select(Invoice).options(selectinload(Invoice.payments)).where(Invoice.invoice_id == dispute.invoice_id))
                 invoice = inv_res.scalar_one()
-                
+
                 if payload.credit_amount is not None:
                     invoice.credit_amount = (invoice.credit_amount or 0) + payload.credit_amount
                 if payload.credit_reason is not None:
                     invoice.credit_reason = payload.credit_reason
-                
+
                 paid_amount = sum(p.amount for p in invoice.payments) if invoice.payments else 0
                 credit = invoice.credit_amount or 0
-                if invoice.amount_due - credit - paid_amount <= 0:
+                tax = invoice.tax_amount or decimal.Decimal('0.00')
+                total_with_tax = invoice.amount_due + tax
+                if total_with_tax - credit - paid_amount <= 0:
                     invoice.status = 'paid'
                 else:
                     invoice.status = 'issued'
@@ -438,4 +475,83 @@ class BillingService:
 
         await db.flush()
         return claim
+
+    # --- REFUND SERVICE METHODS ---
+
+    @staticmethod
+    async def refund_deposit(
+        db: AsyncSession,
+        deposit_id: uuid.UUID,
+        amount: decimal.Decimal,
+        reason: str
+    ) -> Deposit:
+        res = await db.execute(select(Deposit).where(Deposit.deposit_id == deposit_id))
+        deposit = res.scalar_one_or_none()
+        if not deposit:
+            raise NotFoundError(f"Deposit with ID {deposit_id} not found.")
+
+        if deposit.status == 'refunded':
+            raise ValueError("Deposit has already been refunded.")
+        if deposit.status == 'applied':
+            raise ValueError("Cannot refund a deposit that has already been applied to an invoice.")
+
+        if amount > deposit.amount:
+            raise ValueError(f"Refund amount (${amount}) exceeds deposit collected amount (${deposit.amount}).")
+
+        deposit.status = 'refunded'
+        deposit.refund_amount = amount
+        deposit.refunded_at = datetime.datetime.now(datetime.timezone.utc)
+
+        await db.flush()
+        return deposit
+
+    @staticmethod
+    async def refund_payment(
+        db: AsyncSession,
+        payment_id: uuid.UUID,
+        amount: decimal.Decimal,
+        reason: str
+    ) -> Payment:
+        from sqlalchemy.orm import selectinload
+        res = await db.execute(
+            select(Payment)
+            .options(selectinload(Payment.invoice).selectinload(Invoice.payments))
+            .where(Payment.payment_id == payment_id)
+        )
+        payment = res.scalar_one_or_none()
+        if not payment:
+            raise NotFoundError(f"Payment with ID {payment_id} not found.")
+
+        if payment.refund_amount is not None:
+            raise ValueError("Payment has already been refunded.")
+
+        if amount > payment.amount:
+            raise ValueError(f"Refund amount (${amount}) exceeds payment amount (${payment.amount}).")
+
+        # If payment was processed via Stripe, issue online refund
+        if payment.stripe_payment_intent_id or payment.stripe_charge_id:
+            from app.services.stripe_service import StripeService
+            stripe_refund_id = await StripeService.create_refund(payment, amount, reason)
+            payment.stripe_refund_id = stripe_refund_id
+
+        payment.refund_amount = amount
+        payment.refund_reason = reason
+        payment.refunded_at = datetime.datetime.now(datetime.timezone.utc)
+
+        # If invoice was marked 'paid', recalculate if it should revert to 'issued'
+        if payment.invoice:
+            invoice = payment.invoice
+            credit = invoice.credit_amount or decimal.Decimal('0.00')
+            tax = invoice.tax_amount or decimal.Decimal('0.00')
+            # Effective total payments minus refunds
+            net_paid = sum(
+                (p.amount - (p.refund_amount or decimal.Decimal('0.00')))
+                for p in invoice.payments
+            )
+            total_due = invoice.amount_due + tax - credit
+            if total_due > net_paid:
+                invoice.status = 'issued'
+
+        await db.flush()
+        return payment
 

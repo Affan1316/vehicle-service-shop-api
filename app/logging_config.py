@@ -6,7 +6,6 @@ Emits JSON-formatted log records so they can be ingested by log aggregators
 """
 
 import logging
-import json
 import sys
 from datetime import datetime, timezone
 

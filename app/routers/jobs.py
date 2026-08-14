@@ -1,12 +1,12 @@
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.models import Customer, Vehicle, Quote, WorkOrder, LineItem, ChangeOrder, QualityCheck, User
+from app.models.models import Customer, Vehicle, WorkOrder, ChangeOrder, User
 from app.schemas import (
     WorkOrderCreate, WorkOrderUpdate, WorkOrderResponse,
     LineItemCreate, LineItemUpdate, LineItemResponse,
@@ -19,7 +19,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from app.routers.auth_deps import RoleChecker, get_current_user
 from app.routers.pagination_deps import PaginationParams
 
-from app.services import JobService
+from app.services import JobService, EmailService, AuditService
 from app.exceptions import NotFoundError
 
 router = APIRouter()
@@ -27,23 +27,33 @@ router = APIRouter()
 # --- WORK ORDER ENDPOINTS ---
 
 @router.post(
-    "/work-orders", 
-    response_model=WorkOrderResponse, 
-    status_code=status.HTTP_201_CREATED, 
+    "/work-orders",
+    response_model=WorkOrderResponse,
+    status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
 )
-async def create_work_order(payload: WorkOrderCreate, db: AsyncSession = Depends(get_db)):
+async def create_work_order(
+    payload: WorkOrderCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """
     Generate a new work order from an approved quote.
     """
     try:
-        return await JobService.create_work_order(db, payload)
+        wo = await JobService.create_work_order(db, payload)
+        await AuditService.log_create(
+            db, "work_order", str(wo.work_order_id),
+            current_user.user_id, current_user.username,
+            {"vehicle_id": wo.vehicle_id, "authorized_amount": str(wo.authorized_amount), "status": wo.status}
+        )
+        return wo
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get(
-    "/work-orders", 
-    response_model=LimitOffsetPage[WorkOrderResponse], 
+    "/work-orders",
+    response_model=LimitOffsetPage[WorkOrderResponse],
     dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
 )
 async def list_work_orders(params: PaginationParams = Depends(), db: AsyncSession = Depends(get_db)):
@@ -57,8 +67,8 @@ async def list_work_orders(params: PaginationParams = Depends(), db: AsyncSessio
     return await apaginate(db, query, params)
 
 @router.get(
-    "/work-orders/{work_order_id}", 
-    response_model=WorkOrderResponse, 
+    "/work-orders/{work_order_id}",
+    response_model=WorkOrderResponse,
     dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
 )
 async def get_work_order(work_order_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
@@ -71,13 +81,14 @@ async def get_work_order(work_order_id: uuid.UUID, db: AsyncSession = Depends(ge
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.put(
-    "/work-orders/{work_order_id}", 
-    response_model=WorkOrderResponse, 
+    "/work-orders/{work_order_id}",
+    response_model=WorkOrderResponse,
     dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
 )
 async def update_work_order(
-    work_order_id: uuid.UUID, 
-    payload: WorkOrderUpdate, 
+    work_order_id: uuid.UUID,
+    payload: WorkOrderUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor"]))
 ):
@@ -86,9 +97,30 @@ async def update_work_order(
     """
     if current_user.role == "advisor" and payload.authorized_amount is not None:
         raise HTTPException(status_code=403, detail="Advisors cannot manually override the authorized amount. Manager approval required.")
-        
+
     try:
-        return await JobService.update_work_order(db, work_order_id, payload)
+        wo = await JobService.update_work_order(db, work_order_id, payload)
+        await AuditService.log_update(
+            db, "work_order", str(work_order_id),
+            current_user.user_id, current_user.username,
+            payload.model_dump(exclude_unset=True)
+        )
+        # If work order was closed, send vehicle ready email
+        if payload.status == "closed":
+            cust_res = await db.execute(select(Customer).where(Customer.customer_id == wo.customer_id))
+            cust = cust_res.scalar_one_or_none()
+            veh_res = await db.execute(select(Vehicle).where(Vehicle.vin == wo.vehicle_id))
+            veh = veh_res.scalar_one_or_none()
+            if cust and cust.email and veh:
+                veh_desc = f"{veh.year} {veh.make} {veh.model}"
+                background_tasks.add_task(
+                    EmailService.send_vehicle_ready,
+                    cust.email,
+                    cust.name,
+                    veh_desc,
+                    wo.work_order_id
+                )
+        return wo
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -130,14 +162,14 @@ async def list_labor_entries(work_order_id: uuid.UUID, db: AsyncSession = Depend
 # --- LINE ITEM ENDPOINTS ---
 
 @router.post(
-    "/work-orders/{work_order_id}/line-items", 
-    response_model=LineItemResponse, 
-    status_code=status.HTTP_201_CREATED, 
+    "/work-orders/{work_order_id}/line-items",
+    response_model=LineItemResponse,
+    status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(RoleChecker(["manager", "advisor"]))]
 )
 async def create_line_item(
-    work_order_id: uuid.UUID, 
-    payload: LineItemCreate, 
+    work_order_id: uuid.UUID,
+    payload: LineItemCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor"]))
 ):
@@ -146,7 +178,7 @@ async def create_line_item(
     """
     if current_user.role == "advisor" and payload.price == 0 and not payload.is_complimentary:
         raise HTTPException(status_code=403, detail="Advisors cannot add a line item with $0 price unless marked as complimentary.")
-        
+
     try:
         return await JobService.create_line_item(db, work_order_id, payload)
     except NotFoundError as e:
@@ -155,8 +187,8 @@ async def create_line_item(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.put(
-    "/line-items/{line_item_id}", 
-    response_model=LineItemResponse, 
+    "/line-items/{line_item_id}",
+    response_model=LineItemResponse,
     dependencies=[Depends(RoleChecker(["manager", "advisor", "technician"]))]
 )
 async def update_line_item(line_item_id: uuid.UUID, payload: LineItemUpdate, current_user = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -214,7 +246,7 @@ async def create_change_order(work_order_id: uuid.UUID, payload: ChangeOrderCrea
     response_model=List[ChangeOrderResponse]
 )
 async def list_change_orders(
-    work_order_id: uuid.UUID, 
+    work_order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor", "technician", "customer"]))
 ):
@@ -235,8 +267,8 @@ async def list_change_orders(
     response_model=ChangeOrderResponse
 )
 async def update_change_order(
-    change_order_id: uuid.UUID, 
-    payload: ChangeOrderUpdate, 
+    change_order_id: uuid.UUID,
+    payload: ChangeOrderUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(RoleChecker(["manager", "advisor", "customer"]))
 ):
@@ -252,11 +284,11 @@ async def update_change_order(
         wo = wo_res.scalar_one()
         if wo.customer_id != current_user.customer_id:
             raise HTTPException(status_code=403, detail="Not authorized to update this change order.")
-            
+
     elif current_user.role == "advisor":
         if payload.approval_status == "approved":
             raise HTTPException(status_code=403, detail="Advisors are not authorized to approve change orders. Manager approval is required.")
-            
+
     try:
         return await JobService.update_change_order(db, change_order_id, payload)
     except NotFoundError as e:
