@@ -173,6 +173,6 @@ seed_template.py
 # Large presentation files
 presentation_files.txt
 
-# Local uploads and tools cache
-uploads/
-.ruff_cache/
+# Flutter Frontend subfolder (separate repository)
+wheels_doc/
+

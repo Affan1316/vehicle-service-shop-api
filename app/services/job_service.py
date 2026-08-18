@@ -14,7 +14,7 @@ class JobService:
         cust_res = await db.execute(select(Customer).where(Customer.customer_id == payload.customer_id))
         if not cust_res.scalar_one_or_none():
             raise ValueError("Customer does not exist.")
-
+        
         veh_res = await db.execute(select(Vehicle).where(Vehicle.vin == payload.vehicle_id))
         veh = veh_res.scalar_one_or_none()
         if not veh:
@@ -83,7 +83,7 @@ class JobService:
             if payload.status == 'closed':
                 if any(li.status != 'completed' for li in wo.line_items):
                     raise ValueError("Cannot close work order: all tasks must be completed.")
-
+                
                 REQUIRE_QC_BEFORE_CLOSURE = True
                 if REQUIRE_QC_BEFORE_CLOSURE:
                     from app.models.models import QualityCheck
@@ -95,7 +95,7 @@ class JobService:
                 # Auto-generate warranty if required
                 from app.models.models import Warranty, PartInstance, Part
                 warranty_needed = any(getattr(li, 'warranty_required', False) for li in wo.line_items)
-
+                
                 if not warranty_needed:
                     li_ids = [li.line_item_id for li in wo.line_items]
                     if li_ids:
@@ -106,7 +106,7 @@ class JobService:
                             if getattr(pi.part, 'warranty_required', False):
                                 warranty_needed = True
                                 break
-
+                                
                 if warranty_needed:
                     existing_w_res = await db.execute(select(Warranty).where(Warranty.work_order_id == work_order_id))
                     if not existing_w_res.scalar_one_or_none():
@@ -120,7 +120,7 @@ class JobService:
                             start_date=datetime.date.today()
                         )
                         db.add(new_w)
-
+                        
             wo.status = payload.status
         if payload.authorized_amount is not None:
             wo.authorized_amount = payload.authorized_amount
@@ -184,21 +184,21 @@ class JobService:
         if payload.price is not None:
             if li.status == 'completed' and payload.price != li.price:
                 raise ValueError("Cannot modify the price of a completed line item.")
-
+            
             wo_res = await db.execute(select(WorkOrder).options(selectinload(WorkOrder.line_items)).where(WorkOrder.work_order_id == li.work_order_id))
             wo = wo_res.scalar_one()
             other_total = sum(item.price for item in wo.line_items if item.line_item_id != li.line_item_id)
             if other_total + payload.price > wo.authorized_amount:
                 raise ValueError(f"Updating this line item price ({payload.price}) exceeds the authorized amount ({wo.authorized_amount}).")
             li.price = payload.price
-
-        if payload.status is not None:
+            
             if payload.status in ['in_progress', 'completed']:
                 wo_res = await db.execute(select(WorkOrder).where(WorkOrder.work_order_id == li.work_order_id))
                 wo = wo_res.scalar_one()
-                if wo.status not in ['active', 'in_progress']:
-                    raise ValueError(f"Cannot change line item status to {payload.status} unless the work order is active.")
+                if wo.status not in ['in_progress', 'active']:
+                    raise ValueError(f"Cannot change line item status to {payload.status} unless the work order is active or in_progress.")
 
+                    
             if payload.status == 'in_progress':
                 from app.models.models import ChangeOrder
                 co_res = await db.execute(select(ChangeOrder).where(ChangeOrder.line_item_id == line_item_id, ChangeOrder.approval_status == 'issued'))
@@ -222,8 +222,8 @@ class JobService:
         wo = wo_res.scalar_one_or_none()
         if not wo:
             raise NotFoundError("WorkOrder not found")
-        if wo.status not in ['active', 'in_progress']:
-            raise ValueError(f"Cannot log labor: WorkOrder is '{wo.status}', not 'active'.")
+        if wo.status != 'in_progress':
+            raise ValueError(f"Cannot log labor: WorkOrder is '{wo.status}', not 'in_progress'.")
 
         # Verify line item belongs to work order
         li_res = await db.execute(
@@ -238,6 +238,7 @@ class JobService:
             raise ValueError(f"Cannot log labor: LineItem is '{li.status}', not 'in_progress'.")
 
         # Verify technician exists and has active certification
+        from app.models.models import Technician, Certification
         tech_res = await db.execute(
             select(Technician)
             .options(selectinload(Technician.certifications))
@@ -246,7 +247,7 @@ class JobService:
         tech = tech_res.scalar_one_or_none()
         if not tech:
             raise ValueError("Technician not found.")
-
+            
         import datetime
         has_active_cert = any(c.expiry_date >= datetime.date.today() for c in tech.certifications)
         if not has_active_cert:
@@ -346,8 +347,9 @@ class JobService:
         li = await JobService.get_line_item(db, line_item_id)
         if li.status != 'completed':
             raise ValueError(f"Cannot perform quality check: LineItem is '{li.status}', not 'completed'.")
-
+        
         # Verify technician exists and has active certification
+        from app.models.models import Technician, Certification
         tech_res = await db.execute(
             select(Technician)
             .options(selectinload(Technician.certifications))
@@ -356,7 +358,7 @@ class JobService:
         tech = tech_res.scalar_one_or_none()
         if not tech:
             raise ValueError("Technician not found.")
-
+            
         import datetime
         has_active_cert = any(c.expiry_date >= datetime.date.today() for c in tech.certifications)
         if not has_active_cert:

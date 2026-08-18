@@ -1,5 +1,4 @@
 import uuid
-import decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.models import Customer, Vehicle, Appointment, Visit, Quote, WorkOrder, Invoice, Payment
@@ -15,10 +14,8 @@ class CustomerService:
             customer_type=payload.customer_type,
             billing_address=payload.billing_address,
             tax_exempt=payload.tax_exempt,
-            phone=payload.phone,
             email=payload.email,
-            secondary_phone=payload.secondary_phone,
-            notes=payload.notes
+            phone=payload.phone
         )
         db.add(customer)
         await db.flush()
@@ -35,7 +32,7 @@ class CustomerService:
     @staticmethod
     async def update_customer(db: AsyncSession, customer_id: uuid.UUID, payload: CustomerUpdate) -> Customer:
         customer = await CustomerService.get_customer(db, customer_id)
-
+        
         if payload.name is not None:
             customer.name = payload.name
         if payload.customer_type is not None:
@@ -44,15 +41,11 @@ class CustomerService:
             customer.billing_address = payload.billing_address
         if payload.tax_exempt is not None:
             customer.tax_exempt = payload.tax_exempt
-        if payload.phone is not None:
-            customer.phone = payload.phone
         if payload.email is not None:
             customer.email = payload.email
-        if payload.secondary_phone is not None:
-            customer.secondary_phone = payload.secondary_phone
-        if payload.notes is not None:
-            customer.notes = payload.notes
-
+        if payload.phone is not None:
+            customer.phone = payload.phone
+            
         await db.flush()
         return customer
 
@@ -74,8 +67,7 @@ class CustomerService:
             make=payload.make,
             model=payload.model,
             year=payload.year,
-            current_mileage=payload.current_mileage,
-            license_plate=payload.license_plate
+            current_mileage=payload.current_mileage
         )
         db.add(vehicle)
         await db.flush()
@@ -106,8 +98,6 @@ class CustomerService:
             vehicle.year = payload.year
         if payload.current_mileage is not None:
             vehicle.current_mileage = payload.current_mileage
-        if payload.license_plate is not None:
-            vehicle.license_plate = payload.license_plate
 
         await db.flush()
         return vehicle
@@ -120,7 +110,7 @@ class CustomerService:
     @staticmethod
     async def get_timeline_events(db: AsyncSession, customer_id: uuid.UUID) -> list[dict]:
         events = []
-
+        
         # 1. Appointments
         res_appts = await db.execute(select(Appointment).where(Appointment.customer_id == customer_id))
         for appt in res_appts.scalars().all():
@@ -132,7 +122,7 @@ class CustomerService:
                 "type": "appointment",
                 "status": appt.status
             })
-
+            
         # 2. Visits (Check-in)
         res_visits = await db.execute(select(Visit).where(Visit.customer_id == customer_id))
         for visit in res_visits.scalars().all():
@@ -144,7 +134,7 @@ class CustomerService:
                 "type": "check_in",
                 "status": visit.status
             })
-
+            
         # 3. Quotes
         res_quotes = await db.execute(select(Quote).where(Quote.customer_id == customer_id))
         for quote in res_quotes.scalars().all():
@@ -156,7 +146,7 @@ class CustomerService:
                 "type": "quote",
                 "status": quote.status
             })
-
+            
         # 4. Work Orders
         res_wos = await db.execute(select(WorkOrder).where(WorkOrder.customer_id == customer_id))
         for wo in res_wos.scalars().all():
@@ -168,19 +158,19 @@ class CustomerService:
                 "type": "work_order",
                 "status": wo.status
             })
-
+            
         # 5. Invoices
         res_invs = await db.execute(select(Invoice).where(Invoice.customer_id == customer_id))
         for inv in res_invs.scalars().all():
             events.append({
                 "title": f"Invoice {inv.status}",
                 "date": inv.issued_at,
-                "description": "Invoice issued.",
+                "description": f"Invoice issued.",
                 "amount": f"${inv.amount_due:,.2f}",
                 "type": "invoice",
                 "status": inv.status
             })
-
+            
         # 6. Payments
         # We need payments for this customer. Payments are linked to Invoice, so we join.
         res_pays = await db.execute(
@@ -188,7 +178,7 @@ class CustomerService:
             .join(Invoice, Payment.invoice_id == Invoice.invoice_id)
             .where(Invoice.customer_id == customer_id)
         )
-        for payment, _invoice in res_pays.all():
+        for payment, invoice in res_pays.all():
             events.append({
                 "title": "Payment received",
                 "date": payment.collected_at,
@@ -197,7 +187,20 @@ class CustomerService:
                 "type": "payment",
                 "status": "completed"
             })
-
+            
+        # 7. Communications
+        from app.models.models import CommunicationLog
+        res_comms = await db.execute(select(CommunicationLog).where(CommunicationLog.customer_id == customer_id))
+        for log in res_comms.scalars().all():
+            events.append({
+                "title": f"Message {log.status}",
+                "date": log.sent_at,
+                "description": log.body,
+                "amount": None,
+                "type": log.type,
+                "status": log.status
+            })
+            
         # Sort events by date descending
         # Convert date/datetime to timestamp for safe sorting
         import datetime
@@ -208,96 +211,12 @@ class CustomerService:
                 # convert date to datetime
                 return datetime.datetime.combine(d, datetime.time.min).timestamp()
             return 0
-
+            
         events.sort(key=lambda x: get_timestamp(x['date']), reverse=True)
-
+        
         # Convert date to datetime for response model if it's a date object
         for event in events:
             if isinstance(event['date'], datetime.date) and not isinstance(event['date'], datetime.datetime):
                 event['date'] = datetime.datetime.combine(event['date'], datetime.time.min, tzinfo=datetime.timezone.utc)
-
+            
         return events
-
-    @staticmethod
-    async def get_vehicle_service_history(db: AsyncSession, vin: str):
-        """
-        Retrieves the complete historical service record of a vehicle by VIN.
-        """
-        from app.schemas.schemas import (
-            VehicleServiceHistory, ServiceHistoryEntry, ServiceHistoryLineItem
-        )
-        from sqlalchemy.orm import selectinload
-
-        veh_res = await db.execute(
-            select(Vehicle)
-            .options(selectinload(Vehicle.customer))
-            .where(Vehicle.vin == vin)
-        )
-        vehicle = veh_res.scalar_one_or_none()
-        if not vehicle:
-            raise NotFoundError(f"Vehicle with VIN '{vin}' not found.")
-
-        wo_stmt = (
-            select(WorkOrder)
-            .options(
-                selectinload(WorkOrder.line_items),
-                selectinload(WorkOrder.quote),
-                selectinload(WorkOrder.invoice).selectinload(Invoice.payments)
-            )
-            .where(WorkOrder.vehicle_id == vin)
-            .order_by(WorkOrder.created_at.desc())
-        )
-        wo_res = await db.execute(wo_stmt)
-        work_orders = wo_res.scalars().all()
-
-        history_entries = []
-        total_spent = decimal.Decimal("0.00")
-
-        for wo in work_orders:
-            line_items = [
-                ServiceHistoryLineItem(
-                    description=li.description,
-                    billing_mode=li.billing_mode,
-                    price=li.price,
-                    status=li.status
-                )
-                for li in wo.line_items
-            ]
-
-            inv_amount = wo.invoice.amount_due if wo.invoice else None
-            inv_status = wo.invoice.status if wo.invoice else None
-            total_paid = None
-            if wo.invoice and wo.invoice.payments:
-                total_paid = sum(
-                    (p.amount - (p.refund_amount or decimal.Decimal("0.00")))
-                    for p in wo.invoice.payments
-                )
-                total_spent += total_paid
-            elif inv_amount and inv_status == 'paid':
-                total_spent += inv_amount
-
-            history_entries.append(
-                ServiceHistoryEntry(
-                    work_order_id=wo.work_order_id,
-                    status=wo.status,
-                    created_at=wo.created_at,
-                    closed_at=wo.closed_at,
-                    quote_total=wo.quote.total_amount if wo.quote else wo.authorized_amount,
-                    line_items=line_items,
-                    invoice_amount=inv_amount,
-                    invoice_status=inv_status,
-                    total_paid=total_paid
-                )
-            )
-
-        return VehicleServiceHistory(
-            vin=vehicle.vin,
-            make=vehicle.make,
-            model=vehicle.model,
-            year=vehicle.year,
-            customer_name=vehicle.customer.name if vehicle.customer else "Unknown",
-            total_visits=len(history_entries),
-            total_spent=total_spent,
-            history=history_entries
-        )
-

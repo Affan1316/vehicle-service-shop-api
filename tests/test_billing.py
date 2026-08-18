@@ -1,5 +1,6 @@
 import pytest
 import httpx
+import uuid
 import datetime
 import random
 import string
@@ -47,6 +48,7 @@ async def test_billing_and_financials_lifecycle(client: httpx.AsyncClient, manag
     assert q_update_resp.status_code == 200
     assert q_update_resp.json()["status"] == "approved"
 
+
     # 3. Work Order (required to generate Invoice)
     wo_resp = await client.post("/work-orders", json={
         "quote_id": quote_id,
@@ -54,9 +56,10 @@ async def test_billing_and_financials_lifecycle(client: httpx.AsyncClient, manag
         "customer_id": cust_id,
         "authorized_amount": 1000.0,
         "status": "closed"
-    }, headers=manager_headers)
+    }, headers=advisor_headers)
     assert wo_resp.status_code == 201
     wo_id = wo_resp.json()["work_order_id"]
+
 
     # 4. Invoice: Create, List, Get, Update
     inv_resp = await client.post("/invoices", json={
