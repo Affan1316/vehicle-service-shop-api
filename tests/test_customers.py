@@ -77,7 +77,7 @@ async def test_vehicle_crud_and_rbac(client: httpx.AsyncClient, manager_headers:
     cust_id = cust_resp.json()["customer_id"]
 
     # 2. Create Vehicle (success)
-    vin = "1FA6P8CF0H5123456" # 17 chars
+    vin = f"1FA6P8CF0H{uuid.uuid4().hex[:7].upper()}" # 17 chars
     veh_resp = await client.post("/vehicles", json={
         "vin": vin,
         "customer_id": cust_id,
@@ -92,14 +92,16 @@ async def test_vehicle_crud_and_rbac(client: httpx.AsyncClient, manager_headers:
     assert veh_data["make"] == "Ford"
 
     # 3. Create Vehicle (non-existent customer id)
+    bad_vin = f"1FA6P8CF9H{uuid.uuid4().hex[:7].upper()}"
     bad_veh_resp = await client.post("/vehicles", json={
-        "vin": "1FA6P8CF0H5999999",
+        "vin": bad_vin,
         "customer_id": str(uuid.uuid4()),
         "make": "Ford",
         "model": "F-150",
         "year": 2020
     }, headers=advisor_headers)
     assert bad_veh_resp.status_code == 400
+
 
     # 4. List Vehicles
     list_resp = await client.get("/vehicles", headers=advisor_headers)

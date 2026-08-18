@@ -19,6 +19,8 @@ from app.routers.pagination_deps import PaginationParams
 from app.services import CustomerService, SearchService, AuditService
 from app.exceptions import NotFoundError
 
+
+
 router = APIRouter()
 
 
@@ -206,8 +208,9 @@ async def create_vehicle(
             {"make": veh.make, "model": veh.model, "year": veh.year}
         )
         return veh
-    except ValueError as e:
+    except (ValueError, NotFoundError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.get(
     "/vehicles",

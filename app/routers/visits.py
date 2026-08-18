@@ -17,6 +17,8 @@ from app.routers.pagination_deps import PaginationParams
 from app.services import VisitService, EmailService, AuditService
 from app.exceptions import NotFoundError
 
+
+
 router = APIRouter()
 
 # --- APPOINTMENT ENDPOINTS ---

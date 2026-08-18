@@ -222,8 +222,9 @@ class JobService:
         wo = wo_res.scalar_one_or_none()
         if not wo:
             raise NotFoundError("WorkOrder not found")
-        if wo.status != 'in_progress':
-            raise ValueError(f"Cannot log labor: WorkOrder is '{wo.status}', not 'in_progress'.")
+        if wo.status not in ['active', 'in_progress']:
+            raise ValueError(f"Cannot log labor: WorkOrder is '{wo.status}', not 'active' or 'in_progress'.")
+
 
         # Verify line item belongs to work order
         li_res = await db.execute(

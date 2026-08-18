@@ -17,6 +17,8 @@ from app.routers.auth_deps import get_current_user, RoleChecker
 from app.services import AuthService, EmailService
 from app.exceptions import NotFoundError
 
+
+
 router = APIRouter()
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

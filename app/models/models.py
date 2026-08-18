@@ -31,7 +31,7 @@ import datetime
 import decimal
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, UniqueConstraint, Uuid, text, event
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, UniqueConstraint, Uuid, JSON, text, event
 from sqlalchemy.sql import func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -54,8 +54,11 @@ class Customer(Base):
     customer_type: Mapped[str] = mapped_column(String(20), nullable=False)
     tax_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
     billing_address: Mapped[Optional[str]] = mapped_column(String(500))
+    phone: Mapped[Optional[str]] = mapped_column(String(20))
     email: Mapped[Optional[str]] = mapped_column(String(255))
-    phone: Mapped[Optional[str]] = mapped_column(String(50))
+    secondary_phone: Mapped[Optional[str]] = mapped_column(String(20))
+    notes: Mapped[Optional[str]] = mapped_column(String(1000))
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255))
     safepay_customer_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # --- MANUAL: relationships (sqlacodegen generates these but they needed renaming & fixing) ---
@@ -68,7 +71,14 @@ class Customer(Base):
     deposits: Mapped[list['Deposit']] = relationship('Deposit', back_populates='customer')
     communication_logs: Mapped[list['CommunicationLog']] = relationship('CommunicationLog', back_populates='customer')
 
+
     # --- MANUAL: application-level validation ---
+    @validates('email')
+    def validate_email(self, key, value):
+        if value is not None and '@' not in value:
+            raise ValueError("Invalid email format.")
+        return value
+
     @validates('customer_type')
     def validate_customer_type(self, key, value):
         if value not in ('individual', 'fleet'):
@@ -146,6 +156,10 @@ class Part(Base):
 
     part_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     part_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, server_default=text("''::character varying"))
+    description: Mapped[Optional[str]] = mapped_column(String(1000))
+    cost_price: Mapped[decimal.Decimal] = mapped_column(Numeric(10, 2), nullable=False, server_default=text("'0.00'::numeric"))
+    retail_price: Mapped[decimal.Decimal] = mapped_column(Numeric(10, 2), nullable=False, server_default=text("'0.00'::numeric"))
     quantity_on_hand: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
     is_returnable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
     category: Mapped[Optional[str]] = mapped_column(String(100))
@@ -157,11 +171,33 @@ class Part(Base):
     part_instances: Mapped[list['PartInstance']] = relationship('PartInstance', back_populates='part')
 
     # --- MANUAL: validation ---
+    @validates('cost_price', 'retail_price')
+    def validate_prices(self, key, value):
+        decimal_val = decimal.Decimal(str(value))
+        if decimal_val < 0:
+            raise ValueError(f"{key} cannot be negative.")
+        return decimal_val
+
     @validates('quantity_on_hand')
     def validate_quantity_on_hand(self, key, value):
         if value < 0:
             raise ValueError("quantity_on_hand cannot be negative.")
         return value
+
+    # --- MANUAL: computed property ---
+    @hybrid_property
+    def markup_percent(self) -> decimal.Decimal:
+        if self.cost_price and self.cost_price > 0:
+            return ((self.retail_price - self.cost_price) / self.cost_price * 100).quantize(decimal.Decimal('0.01'))
+        return decimal.Decimal('0.00')
+
+    @markup_percent.expression
+    def markup_percent(cls):
+        from sqlalchemy import case, cast, Numeric
+        return case(
+            (cls.cost_price > 0, cast((cls.retail_price - cls.cost_price) / cls.cost_price * 100, Numeric(10, 2))),
+            else_=decimal.Decimal('0.00')
+        )
 
 
 class Payer(Base):
@@ -211,6 +247,7 @@ class Vehicle(Base):
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     current_mileage: Mapped[Optional[int]] = mapped_column(Integer)
+    license_plate: Mapped[Optional[str]] = mapped_column(String(15))
 
     # --- MANUAL: relationships ---
     customer: Mapped['Customer'] = relationship('Customer', back_populates='vehicles')
@@ -314,7 +351,7 @@ class Appointment(Base):
             value = datetime.datetime.strptime(value, "%Y-%m-%d").date()
         elif isinstance(value, datetime.datetime):
             value = value.date()
-            
+
         from sqlalchemy import inspect
         from sqlalchemy.orm.attributes import NO_VALUE
         try:
@@ -325,7 +362,7 @@ class Appointment(Base):
                     return value
         except Exception:
             pass
-            
+
         if value < datetime.date.today():
             raise ValueError("requested_date cannot be in the past.")
         return value
@@ -375,10 +412,10 @@ class Visit(Base):
         allowed_statuses = {'checked_in', 'in_diagnosis', 'awaiting_quote', 'in_service', 'awaiting_pickup', 'completed'}
         if value not in allowed_statuses:
             raise ValueError(f"Invalid status: '{value}'.")
-        
+
         from sqlalchemy.orm.attributes import NO_VALUE
         from sqlalchemy import inspect
-        
+
         try:
             insp = inspect(self)
             committed = insp.attrs.status.loaded_value
@@ -969,8 +1006,11 @@ class Invoice(Base):
     warranty_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     credit_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(10, 2))
     credit_reason: Mapped[Optional[str]] = mapped_column(String(500))
+    tax_rate: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(5, 4))
+    tax_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(10, 2))
     safepay_tracker_id: Mapped[Optional[str]] = mapped_column(String(255))
     safepay_checkout_url: Mapped[Optional[str]] = mapped_column(String(500))
+
 
     # --- MANUAL: relationships ---
     customer: Mapped['Customer'] = relationship('Customer', back_populates='invoices')
@@ -985,6 +1025,7 @@ class Invoice(Base):
     def total_balance(self) -> decimal.Decimal:
         from sqlalchemy import inspect
         credit = self.credit_amount if self.credit_amount is not None else decimal.Decimal('0.00')
+        tax = self.tax_amount if self.tax_amount is not None else decimal.Decimal('0.00')
         paid = decimal.Decimal('0.00')
         try:
             insp = inspect(self)
@@ -992,7 +1033,7 @@ class Invoice(Base):
                 paid = sum(p.amount for p in self.payments) if hasattr(self, 'payments') and self.payments else decimal.Decimal('0.00')
         except Exception:
             pass
-        return self.amount_due - credit - paid
+        return self.amount_due + tax - credit - paid
 
     @total_balance.expression
     def total_balance(cls):
@@ -1003,7 +1044,7 @@ class Invoice(Base):
             .correlate_except(Payment)
             .scalar_subquery()
         )
-        return cls.amount_due - func.coalesce(cls.credit_amount, decimal.Decimal('0.00')) - paid_subq
+        return cls.amount_due + func.coalesce(cls.tax_amount, decimal.Decimal('0.00')) - func.coalesce(cls.credit_amount, decimal.Decimal('0.00')) - paid_subq
 
 
 class Dispute(Base):
@@ -1048,7 +1089,13 @@ class Payment(Base):
     method: Mapped[str] = mapped_column(String(50), nullable=False)
     collected_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     payer_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    refunded_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    refund_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(10, 2))
+    refund_reason: Mapped[Optional[str]] = mapped_column(String(500))
+    stripe_payment_intent_id: Mapped[Optional[str]] = mapped_column(String(255))
+    stripe_checkout_session_id: Mapped[Optional[str]] = mapped_column(String(255))
     stripe_charge_id: Mapped[Optional[str]] = mapped_column(String(255))
+    stripe_refund_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # --- MANUAL: relationships ---
     invoice: Mapped['Invoice'] = relationship('Invoice', back_populates='payments')
@@ -1250,7 +1297,42 @@ def receive_appointment_status_set(target, value, oldvalue, initiator):
 
 
 # ================================================================
-# SECTION 9: User Authentication Model  [ENTIRELY MANUAL]
+# SECTION 9: Canned Services / Service Menu  [MANUAL]
+# ================================================================
+
+class CannedService(Base):
+    __tablename__ = 'canned_service'
+    __table_args__ = (
+        CheckConstraint("billing_mode::text = ANY (ARRAY['flat_rate'::character varying, 'hourly'::character varying]::text[])", name='canned_service_billing_mode_check'),
+        PrimaryKeyConstraint('service_id', name='canned_service_pkey')
+    )
+
+    service_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(1000))
+    category: Mapped[Optional[str]] = mapped_column(String(100))
+    billing_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'flat_rate'::character varying"))
+    default_price: Mapped[decimal.Decimal] = mapped_column(Numeric(10, 2), nullable=False, server_default=text("'0.00'::numeric"))
+    estimated_hours: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(5, 2))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
+
+    # --- MANUAL: validation ---
+    @validates('billing_mode')
+    def validate_billing_mode(self, key, value):
+        if value not in ('flat_rate', 'hourly'):
+            raise ValueError(f"Invalid billing_mode: '{value}'. Must be 'flat_rate' or 'hourly'.")
+        return value
+
+    @validates('default_price')
+    def validate_default_price(self, key, value):
+        decimal_val = decimal.Decimal(str(value))
+        if decimal_val < 0:
+            raise ValueError("default_price cannot be negative.")
+        return decimal_val
+
+
+# ================================================================
+# SECTION 10: User Authentication Model  [ENTIRELY MANUAL]
 # This model was NOT in the original SQL schema and was NOT generated
 # by sqlacodegen. It was created manually for JWT authentication.
 # ================================================================
@@ -1269,7 +1351,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, server_default=text("'customer'"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
-    
+
     customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey('customer.customer_id', ondelete='SET NULL'), nullable=True)
     tech_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey('technician.tech_id', ondelete='SET NULL'), nullable=True)
 
@@ -1282,6 +1364,74 @@ class User(Base):
         if value not in valid_roles:
             raise ValueError(f"Invalid role: '{value}'. Must be one of {valid_roles}.")
         return value
+
+
+# ================================================================
+# SECTION 10: Phase 3 Models (Tokens, Attachments, Audit Logs)
+# ================================================================
+
+class PasswordResetToken(Base):
+    __tablename__ = 'password_reset_token'
+    __table_args__ = (
+        PrimaryKeyConstraint('token_id', name='password_reset_token_pkey'),
+        ForeignKeyConstraint(['user_id'], ['user_account.user_id'], ondelete='CASCADE', name='password_reset_token_user_id_fkey'),
+        Index('idx_password_reset_token_user', 'user_id'),
+    )
+
+    token_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    used_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True), nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+
+    user: Mapped['User'] = relationship('User')
+
+
+class FileAttachment(Base):
+    __tablename__ = 'file_attachment'
+    __table_args__ = (
+        PrimaryKeyConstraint('file_id', name='file_attachment_pkey'),
+        ForeignKeyConstraint(['uploaded_by'], ['user_account.user_id'], ondelete='SET NULL', name='file_attachment_uploaded_by_fkey'),
+        Index('idx_file_attachment_entity', 'entity_type', 'entity_id'),
+        Index('idx_file_attachment_uploader', 'uploaded_by'),
+    )
+
+    file_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'work_order', 'diagnostic', 'vehicle', 'invoice'
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)
+    uploaded_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    uploader: Mapped[Optional['User']] = relationship('User')
+
+
+class AuditLog(Base):
+    __tablename__ = 'audit_log'
+    __table_args__ = (
+        PrimaryKeyConstraint('log_id', name='audit_log_pkey'),
+        ForeignKeyConstraint(['actor_id'], ['user_account.user_id'], ondelete='SET NULL', name='audit_log_actor_id_fkey'),
+        Index('idx_audit_log_entity', 'entity_type', 'entity_id'),
+        Index('idx_audit_log_actor', 'actor_id'),
+        Index('idx_audit_log_timestamp', 'timestamp'),
+    )
+
+    log_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # 'create', 'update', 'delete'
+    actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)
+    actor_username: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    changes: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    actor: Mapped[Optional['User']] = relationship('User')
+
 
 class CommunicationLog(Base):
     __tablename__ = 'communication_log'
@@ -1300,3 +1450,5 @@ class CommunicationLog(Base):
 
     # --- MANUAL: relationships ---
     customer: Mapped['Customer'] = relationship('Customer', back_populates='communication_logs')
+
+

@@ -18,3 +18,8 @@ secure
 python-json-logger
 prometheus-fastapi-instrumentator
 twilio
+aiosmtplib
+reportlab
+stripe
+
+

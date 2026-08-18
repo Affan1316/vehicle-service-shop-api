@@ -4,7 +4,8 @@ from fastapi.openapi.utils import get_openapi
 from app.config import settings  # Application configuration settings loaded from environment
 from app.logging_config import setup_logging  # Function to configure structured JSON logging
 from app.routers import (
-    customers, visits, jobs, billing, resources, auth, inventory, diagnostics, communications, catalog, labor, accounting
+    customers, visits, jobs, billing, resources, auth, inventory, diagnostics,
+    communications, catalog, labor, accounting, reports, menu, files, audit
 )  # Modular API router groups
 from app.exception_handlers import register_exception_handlers  # Global database/app error handler registration
 from app.middleware import RequestLoggingMiddleware  # Custom middleware to track request duration and correlation IDs
@@ -162,6 +163,11 @@ app.include_router(communications.router, tags=["Communications"])
 app.include_router(catalog.router, tags=["Catalog"])
 app.include_router(labor.router, tags=["Labor"])
 app.include_router(accounting.router, tags=["Accounting & Sync"])
+app.include_router(reports.router, tags=["Reports & Analytics"])
+app.include_router(menu.router, tags=["Canned Services Menu"])
+app.include_router(files.router, tags=["File Attachments"])
+app.include_router(audit.router, tags=["Audit Trail"])
+
 
 # 10. FASTAPI PAGINATION EXTENSION
 # Initializes the fastapi-pagination framework to handle automatic pagination.
